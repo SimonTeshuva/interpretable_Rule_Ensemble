@@ -9,14 +9,16 @@ import pandas as pd
 import os
 
 def prepare_titanic():
-    titanic_dir = "\\".join(os.getcwd().split("\\")[:-2]) + "\\Datasets\\titanic"
-        
-    train = pd.read_csv(titanic_dir + "\\train.csv")
+    #titanic_dir = "\\".join(os.getcwd().split("\\")[:-2]) + "\\datasets\\titanic"
+
+    titanic_dir = os.path.join(os.getcwd(), "..", "datasets", "titanic")
+
+    train = pd.read_csv(os.path.join(titanic_dir, "train.csv"))
     train['label'] = 'train'
-    test = pd.read_csv(titanic_dir + "\\test.csv")
+    test = pd.read_csv(os.path.join(titanic_dir, "test.csv"))
     test['label'] = 'test'
 
-    survival = pd.read_csv(titanic_dir + "\\gender_submission.csv")
+    survival = pd.read_csv(os.path.join(titanic_dir, "gender_submission.csv"))
 
     # Any results you write to the current directory are saved as output.
 
