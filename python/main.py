@@ -1,46 +1,40 @@
-
-'''
-def print_fucntion_names():
-    current_path = os.getcwd()
-    count = 1
-    for file in os.listdir(current_path):
-        if file != "main.py":
-            print(str(count)+": " + "".join(file.split(".")[:-1]))
-    print(current_path)
-
-def import_script(pmName):
-    pm = __import__(pmName)
-
-def menu():
-
-    return
-
-'''
-
-from additional_scripts import *
-from functions import *
-from datetime import datetime
 import os
 import sys
-import numpy as np # linear algebra
-import pandas as pd # data processing, CSV file I/O (e.g. pd.read_csv)
+import graphviz
 
-# Input data files are available in the "../input/" directory.
-# For example, running this (by clicking run or pressing Shift+Enter) will list the files in the input directory
+import numpy as np 
+import pandas as pd 
 import matplotlib.pyplot as plt
+import xgboost as xgb
+
+from datetime import datetime
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import confusion_matrix
-import xgboost as xgb
-import os
-import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
 
+
+# from functions import *
+from dataset_preparation_scripts import *
+from xgboost_functions import *
+from model_independent_functions import *
+
+# needs to be run before anything else to move working directory up to appropriate level
+def change_cwd_to_project_root():
+    os.chdir('../')
+    os.chdir('../')
+    cwd = os.getcwd()
+    return cwd
+
+
 if __name__ == "__main__":
-    [X_train, Y_train, X_test, Y_test] = prepare_titanic()
-    data = [X_train, Y_train, X_test, Y_test]
-#    model = functions.generate_model(3, 10, X_train, Y_train, X_test, Y_test)
-#    sweep_estimators(data, min_estimators = 1, max_estimators = 50)
-#    generate_interpretability_curve(model, data, sweep_estimators, 1, 10, "nodes by estimators", "error", "estimators sweep")
-    results = run_experiment("titanic", "test.csv", "train.csv", sweep_estimators, [1,20])
+    change_cwd_to_project_root()
+
+    cols_to_drop = ['PassengerId', 'Name', 'Ticket', 'Fare', 'Cabin']
+    data_args = ["titanic2", "test.csv", "train.csv", "Survived", cols_to_drop]
+    data = prepare_dataset_test_train_separate(*data_args)
+    ts = str(get_timestamp())
+#    error, nodes = sweep_param("estimators", data, "titanic2", ts, save_results = True, min_val = 1, max_val = 20)
+#    C:\Users\simon\Documents\Python Workspace\InterpretableRulesets\Experiments\results\titanic2\2019_12_04_16_14_01.085663\estimators\models
+    model = load_xgb_model("titanic2", "2019_12_04_16_14_01.085663", "estimators", "1estimators")
+    print(count_nodes(model))
