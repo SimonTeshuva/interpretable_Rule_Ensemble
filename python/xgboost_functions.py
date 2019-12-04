@@ -31,7 +31,7 @@ def sweep_param(param_name, data, dataset_name, experiment_timestamp, save_resul
         if param_name == "depth":
             model = generate_xgb_model(param_val, 10, X_train, Y_train, X_test, Y_test)
         elif param_name == "estimators":
-            model = generate_xgb_model(5, param_val, X_train, Y_train, X_test, Y_test)
+            model = generate_xgb_model(4, param_val, X_train, Y_train, X_test, Y_test)
         else:
             return "invalid parameter choice"
         
@@ -68,7 +68,7 @@ def save_xgb_trees(model, dataset_name, param_name, iteration_number, experiment
     for i in range(count_trees(model)):
         tree_dir = os.path.join(result_directory_trees, str(estimators) + "estimators" + str(i)+".pdf")
         tree = xgb.plot_tree(model, num_trees=i)
-        plt.savefig(tree_dir, dpi=300, facecolor='w', edgecolor='w',
+        plt.savefig(tree_dir, dpi=1000, facecolor='w', edgecolor='w',
                     orientation='portrait', papertype=None, format=None,
                     transparent=False, bbox_inches=None, pad_inches=0.1,
                     frameon=None, metadata=None)

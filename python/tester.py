@@ -26,20 +26,3 @@ from xgboost_functions import *
 from model_independent_functions import *
 
 if __name__ == "__main__":
-    change_cwd_to_project_root()
-    cols_to_drop = ['name', 'platform', 'developer'	, 'publisher'	, 'genre(s)', 'players', 'rating', 'attribute', 'release_date', 'link']
-    split_size = 0.33
-    param_name = "estimators"
-    dataset_name = "metacritic_games"
-    file_name = "metacritic_games.csv"
-    dataset_dir = os.path.join(os.getcwd(), "Datasets", dataset_name)
-    Y_name = "user_score"
-    experiment_timestamp = str(get_timestamp())
-
-    data = prepare_dataset_one_file(dataset_name, file_name, Y_name, split_size, cols_to_drop)
-    [X_train, Y_train, X_test, Y_test] = data
-    
-    model = generate_xgb_model(3, 10, X_train, Y_train, X_test, Y_test)
-
-       
-#    error, nodes = sweep_param(param_name, data, dataset_name, experiment_timestamp, save_results = True, min_val = 1, max_val = 20)
