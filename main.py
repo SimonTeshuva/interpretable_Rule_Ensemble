@@ -15,9 +15,9 @@ from sklearn.model_selection import train_test_split
 
 
 # from functions import *
-from dataset_preparation_scripts import *
-from xgboost_functions import *
-from model_independent_functions import *
+from orb.dataset_preparation_scripts import *
+from orb.xgboost import *
+from orb.model_independent_functions import *
 
 # needs to be run before anything else to move working directory up to appropriate level
 def change_cwd_to_project_root():
