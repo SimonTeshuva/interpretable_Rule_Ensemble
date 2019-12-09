@@ -13,15 +13,18 @@ import xgboost as xgb
 
 from sklearn.metrics import mean_squared_error
 
-from model_independent_functions import *
-
-def generate_xgb_model(depth, estimators, X_train, Y_train, X_test, Y_test):
-    model = xgb.XGBClassifier(max_depth=depth, learning_rate=0.1, n_estimators=estimators)
-    model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric="auc",
-              eval_set=[(X_test, Y_test)])
+def generate_xgb_model(model_type, depth, estimators, X_train, Y_train, X_test, Y_test):
+    if model_type == "Classifier":
+        model = xgb.XGBClassifier(max_depth=depth, learning_rate=0.1, n_estimators=estimators, verbosity = 0, objective='reg:squarederror')
+        model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric="auc",
+                  eval_set=[(X_test, Y_test)])
+    elif model_type == "Regressor":
+        model = xgb.XGBRegressor(max_depth=depth, learning_rate=0.1, n_estimators=estimators, verbosity = 0, objective='reg:squarederror')
+        model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric="auc",
+                  eval_set=[(X_test, Y_test)])
     return model
 
-def sweep_param(param_name, data, dataset_name, experiment_timestamp, save_results = False, min_val = 1, max_val = 20):
+def sweep_param(param_name, data, dataset_name, model_type, experiment_timestamp, save_results = False, min_val = 1, max_val = 20):
     rmses = []
     no_nodes = []
     X_train, Y_train, X_test, Y_test = data
@@ -29,9 +32,9 @@ def sweep_param(param_name, data, dataset_name, experiment_timestamp, save_resul
         
     for param_val in range(min_val,max_val+1):
         if param_name == "depth":
-            model = generate_xgb_model(param_val, 10, X_train, Y_train, X_test, Y_test)
+            model = generate_xgb_model(model_type, param_val, 10, X_train, Y_train, X_test, Y_test)
         elif param_name == "estimators":
-            model = generate_xgb_model(4, param_val, X_train, Y_train, X_test, Y_test)
+            model = generate_xgb_model(model_type, 4, param_val, X_train, Y_train, X_test, Y_test)
         else:
             return "invalid parameter choice"
         

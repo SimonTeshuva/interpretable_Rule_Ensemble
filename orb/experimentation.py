@@ -14,7 +14,7 @@ import xgboost as xgb
 from datetime import datetime
 from sklearn.model_selection import train_test_split
 
-from xgboost_functions import *
+from orb.xgboost import *
 
 def generate_interpretability_curve(error, interpretability, x_name, y_name, title_name, dataset_name, experiment_timestamp, param_name):
     result_directory_curves = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp, param_name, "plots")
@@ -43,13 +43,8 @@ def generate_interpretability_curve(error, interpretability, x_name, y_name, tit
     
 def run_experiment(dataset_name, test_file_name, train_file_name, experiment, experiment_params = []):
 #     test_df, train_df = prepare_dataset(dataset_name, test_name, train_name, results=[])
-    titanic_exp = 1
-    if titanic_exp == 1:
-        [X_train, Y_train, X_test, Y_test] = prepare_titanic()
-        data = [X_train, Y_train, X_test, Y_test]
-    else:
-        [X_train, Y_train, X_test, Y_test] = prepare_dataset(dataset_name, test_file_name, train_file_name)
-        data = [X_train, Y_train, X_test, Y_test]
+    [X_train, Y_train, X_test, Y_test] = prepare_dataset(dataset_name, test_file_name, train_file_name)
+    data = [X_train, Y_train, X_test, Y_test]
         
     experiment_name_str = experiment.__name__
     experiment_timestamp = str(get_timestamp())
