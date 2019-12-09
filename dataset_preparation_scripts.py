@@ -1,6 +1,7 @@
 import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
+import re
 
 def prepare_dataset_test_train_separate(dataset_name, test_name, train_name, Y_name, cols_to_drop):
     dataset_dir = os.path.join(os.getcwd(), "Datasets", dataset_name)
@@ -17,6 +18,7 @@ def prepare_dataset_test_train_separate(dataset_name, test_name, train_name, Y_n
     test_df = test_df.drop(cols_to_drop, axis='columns')
     test_df = test_df.dropna()
     
+    
     X_test, Y_test = X_Y_Split(test_df, Y_name)
     X_train, Y_train = X_Y_Split(train_df, Y_name)
 
@@ -28,6 +30,10 @@ def X_Y_Split(df, Y_name):
     Y = df[Y_name]
     X = df.drop([Y_name], axis='columns')
     X = pd.get_dummies(X)
+
+    regex = re.compile(r"[|]|<", re.IGNORECASE)
+
+    X.columns = [regex.sub("_", col) if any(x in str(col) for x in set(('[', ']', '<'))) else col for col in X.columns.values]
     
     return X, Y
 
@@ -44,6 +50,10 @@ def prepare_dataset_one_file(dataset_name, file_name, Y_name, split_size, cols_t
     Y = df[Y_name]
     X = df.drop([Y_name], axis='columns')
     X = pd.get_dummies(X)
+    
+    regex = re.compile(r"[|]|<", re.IGNORECASE)
+
+    X.columns = [regex.sub("_", col) if any(x in str(col) for x in set(('[', ']', '<'))) else col for col in X.columns.values]
     
     X_train, X_test, Y_train, Y_test = train_test_split(X,Y,test_size=split_size)
     
