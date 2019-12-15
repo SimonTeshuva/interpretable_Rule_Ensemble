@@ -127,16 +127,16 @@ def squared_loss_obj(labels):
 
 def cov_mean_bound(labels, f):
     """
-    >>> labels = [-4, -2, -1, -1, 0, 1, 10, 21]
+    >>> labels = [-13, -2, -1, -1, 0, 1, 19, 21]
     >>> f = cov_squared_dev(labels)
     >>> obj = squared_loss_obj(labels)
     >>> obj(range(6,8))
-    39.0625
-    >>> f(2, 15.5)
-    39.0625
+    72.25
+    >>> f(2, 20.0)
+    72.25
     >>> bound = cov_mean_bound(labels, f)
     >>> bound(range(len(labels)))  # local avg 8, relative size 1/2
-    12.5
+    72.25
 
     :param labels:
     :param f: any function that can be re-written as the maximum f(c, m)=max(g(c,m), h(c,m)) over functions g and h
@@ -152,15 +152,16 @@ def cov_mean_bound(labels, f):
     def bound(extent):
         ordered = sorted(extent, key=label)
         k = len(ordered)
-        s = 0
         opt = -inf
 
+        s = 0
         for i in range(k):
-            s += ordered[-i-1]
+            s += labels[ordered[-i-1]]
             opt = max(opt, f(i+1, s/(i+1)))
 
+        s = 0
         for i in range(k):
-            s += ordered[i]
+            s += labels[ordered[i]]
             opt = max(opt, f(i+1, s/(i+1)))
 
         return opt
