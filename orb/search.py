@@ -1,4 +1,5 @@
 from collections import deque, namedtuple
+from sortedcontainers import SortedSet
 from operator import attrgetter
 from math import inf
 
@@ -41,6 +42,8 @@ class Context:
         self.attributes = attributes
         self.objects = objects
         self.extents = extents
+        self.n = len(attributes)
+        self.m = len(objects)
 
     def extension(self, intent):
         """
@@ -50,9 +53,11 @@ class Context:
         if not intent:
             return range(len(self.objects))
 
-        result = self.extents[intent[0]][:]
-        for i in intent[1:]:
-            result = merge_intersection(result, self.extents[i])
+        # result = self.extents[intent[0]][:]
+        # for i in intent[1:]:
+        #     result = merge_intersection(result, self.extents[i])
+
+        result = SortedSet.intersection(*map(lambda i: self.extents[i], intent))
 
         return result
 
@@ -80,7 +85,7 @@ def ctx_from_tab(table):
     """
     m = len(table)
     n = len(table[0])
-    extents = [[i for i in range(m) if table[i][j]] for j in range(n)]
+    extents = [SortedSet([i for i in range(m) if table[i][j]]) for j in range(n)]
     return Context(list(range(n)), list(range(m)), extents)
 
 
@@ -169,14 +174,38 @@ def cov_mean_bound(labels, f):
     return bound
 
 
-Node = namedtuple('Node', ['generator', 'closure', 'gen_index', 'val', 'val_bound'])
-value = attrgetter("val")
+Node = namedtuple('Node', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound'])
 
 
-def bfs(obj, bound, context):
-    n = len(context.attributes)
+def bfs(f, g, ctx):
+    """
+    A first example with trivial objective and bounding function is as follows. In this example
+    the optimal extension is the empty extension, which is generated via the
+    the lexicographically smallest and shortest generator [0, 3].
+    >>> table = [[0, 1, 0, 1],
+    ...          [1, 1, 1, 0],
+    ...          [1, 0, 1, 0],
+    ...          [0, 1, 0, 1]]
+    >>> ctx = ctx_from_tab(table)
+    >>> bfs(lambda e: -len(e), lambda e: 1, ctx)
+    Node(generator=[0, 3], closure=[0, 2, 3], extension=SortedSet([]), gen_index=3, val=0, val_bound=1)
+
+    >>> values = [-1, 1, 1, -1]
+    >>> f = lambda e: sum((values[i] for i in e))/4
+    >>> g = lambda e: sum((values[i] for i in e if values[i]==1))/4
+    >>> bfs(f, g, ctx)
+    Node(generator=[0], closure=[0, 2], extension=SortedSet([1, 2]), gen_index=0, val=0.5, val_bound=0.5)
+
+    :param f: objective function
+    :param g: bounding function satisfying that g(I) >= max {f(J): J >= I}
+    :param ctx: the context defining the concept lattice over which the search is performed
+    :return:
+    """
+    value = attrgetter("val")
+    n = len(ctx.attributes)
     boundary = deque()
-    root = Node([], obj([]), None, inf, obj(context.all))
+    full = ctx.extension([])
+    root = Node([], [], full, -1, f(full), inf)
     opt = root
     boundary.append(root)
 
@@ -185,10 +214,10 @@ def bfs(obj, bound, context):
             return None
 
         generator = node.generator + [i]
-        extension = merge_intersection(node.extension, context.extension(i))
+        extension = node.extension & ctx.extension([i])
 
-        val = obj(extension)
-        val_bound = bound(extension)
+        val = f(extension)
+        val_bound = g(extension)
 
         if val_bound < opt.val:
             return None
@@ -199,14 +228,16 @@ def bfs(obj, bound, context):
                 closure.append(j)
                 continue
 
-            if extension >= context.extension(j):
+            if extension >= ctx.extension([j]):
                 return None
 
+        closure.append(i)
+
         for j in range(i + 1, n):
-            if extension >= context.extension(j):
+            if extension >= ctx.extension([j]):
                 closure.append(j)
 
-        return Node(generator, closure, i, val, val_bound)
+        return Node(generator, closure, extension, i, val, val_bound)
 
     while boundary:
         current = boundary.popleft()
