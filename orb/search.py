@@ -4,35 +4,6 @@ from operator import attrgetter
 from math import inf
 
 
-def merge_intersection(a, b):
-    """
-    Forms the intersection of two sorted iterables in linear
-    time. For instance:
-
-    >>> a = [2, 40, 234, 349, 1001]
-    >>> b = [-10, 2, 349, 500, 645, 702, 829]
-    >>> merge_intersection(a, b)
-    [2, 349]
-
-    :param a: sorted iterable of mutually comparable elements
-    :param b: sorted iterable of mutually comparable elements
-    :return: sorted list of elements common to a and b
-    """
-    res = []
-
-    i, j = 0, 0
-    while i < len(a) and j < len(b):
-        if a[i] == b[j]:
-            res += [a[i]]
-            i, j = i + 1, j + 1
-        elif a[i] <= b[j]:
-            i = i + 1
-        elif a[i] >= b[j]:
-            j = j + 1
-
-    return res
-
-
 Node = namedtuple('Node', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound'])
 value = attrgetter("val")
 
@@ -113,14 +84,29 @@ class Context:
         Node(generator=[], closure=[], extension=range(0, 4), gen_index=-1, val=0.0, val_bound=inf)
         Node(generator=[0], closure=[0, 2], extension=SortedSet([1, 2]), gen_index=0, val=0.5, val_bound=0.5)
 
+        Finally, here is a complex example taken from the UdS seminar on subgroup discovery.
+        >>> table = [[1, 1, 1, 1, 0],
+        ...          [1, 1, 0, 0, 0],
+        ...          [1, 0, 1, 0, 0],
+        ...          [0, 1, 1, 1, 1],
+        ...          [0, 0, 1, 1, 1],
+        ...          [1, 1, 0, 0, 1]]
+        >>> ctx = Context.from_tab(table)
+        >>> labels = [1, 0, 1, 0, 0, 0]
+        >>> f = impact(labels)
+        >>> g = cov_incr_mean_bound(labels, impact_count_mean(labels))
+        >>> search = ctx.bfs(f, g)
+        >>> for n in search:
+        ...     print(n)
+
         :param f: objective function
         :param g: bounding function satisfying that g(I) >= max {f(J): J >= I}
         """
-        n = len(self.attributes)
         boundary = deque()
         full = self.extension([])
         root = Node([], [], full, -1, f(full), inf)
         opt = root
+        yield root
         boundary.append(root)
 
         def refinement(node, i):
@@ -147,7 +133,7 @@ class Context:
 
             closure.append(i)
 
-            for j in range(i + 1, n):
+            for j in range(i + 1, self.n):
                 if extension >= self.extents[j]:
                     closure.append(j)
 
@@ -155,11 +141,11 @@ class Context:
 
         while boundary:
             current = boundary.popleft()
-            yield current
-            for a in range(current.gen_index + 1, n):
+            for a in range(current.gen_index + 1, self.n):
                 child = refinement(current, a)
                 if child:
                     opt = max(opt, child, key=value)
+                    yield child
                     boundary.append(child)
 
 
@@ -173,9 +159,48 @@ def cov_squared_dev(labels):
     return f
 
 
+def impact_count_mean(labels):
+    """
+    >>> labels = [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+    >>> f = impact_count_mean(labels)
+    >>> f(5, 0.4) # 1/2 * (2/5-1/5) = 1/6
+    0.1
+    """
+    n = len(labels)
+    m0 = sum(labels)/n
+
+    def f(c, m):
+        return c/n * (m - m0)
+
+    return f
+
+
+def impact(labels):
+    """
+    Compiles objective function for extension I defined by
+    f(I) = len(I)/n (mean_I(l)-mean(l)) for some set of labels l of size n.
+
+    >>> labels = [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+    >>> f = impact(labels)
+    >>> f([0, 1, 2, 3, 4]) # 0.5 * (0.4 - 0.2)
+    0.1
+    >>> f(range(len(labels)))
+    0.0
+    """
+    g = impact_count_mean(labels)
+
+    def f(extension):
+        if len(extension) == 0:
+            return -inf
+        m = sum((labels[i] for i in extension))/len(extension)
+        return g(len(extension), m)
+
+    return f
+
+
 def squared_loss_obj(labels):
     """
-    Builds objective function that maps index to product
+    Builds objective function that maps index set to product
     of relative size of index set times squared difference
     of mean label value described by index set to overall
     mean label value. For instance:
@@ -202,6 +227,32 @@ def squared_loss_obj(labels):
         return f(k, local_mean)
 
     return obj
+
+
+def cov_incr_mean_bound(labels, f):
+    """
+    >>> labels = [1, 1, 1, 0, 1, 0, 1, 0, 0, 0]
+    >>> f = impact_count_mean(labels)
+    >>> g = cov_incr_mean_bound(labels, f)
+    >>> g(range(len(labels)))
+    0.25
+    """
+
+    def label(i): return labels[i]
+
+    def bound(extent):
+        ordered = sorted(extent, key=label)
+        k = len(ordered)
+        opt = -inf
+
+        s = 0
+        for i in range(k):
+            s += labels[ordered[-i-1]]
+            opt = max(opt, f(i+1, s/(i+1)))
+
+        return opt
+
+    return bound
 
 
 def cov_mean_bound(labels, f):
