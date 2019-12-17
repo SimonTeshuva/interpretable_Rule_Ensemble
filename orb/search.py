@@ -4,7 +4,24 @@ from operator import attrgetter
 from math import inf
 
 
-Node = namedtuple('Node', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound'])
+#_Node = namedtuple('_N', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound'])
+
+class Node:
+
+    def __init__(self, gen, clo, ext, idx, val, bnd, opt):
+        self.generator = gen
+        self.closure = clo
+        self.extension = ext
+        self.gen_index = idx
+        self.val = val
+        self.val_bound = bnd
+        self.opt = opt
+
+    def __repr__(self):
+        return f'N({self.generator}, {self.closure}, {self.val:.5f}, {self.opt:.5f}/{self.val_bound:.5f})'
+
+
+#SearchNode = namedtuple('N', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound', 'opt_val'])
 value = attrgetter("val")
 
 
@@ -104,10 +121,11 @@ class Context:
         """
         boundary = deque()
         full = self.extension([])
-        root = Node([], [], full, -1, f(full), inf)
+        root_val = f(full)
+        root = Node([], [], full, -1, root_val, inf, root_val)
         opt = root
         yield root
-        boundary.append(root)
+        boundary.append((range(self.n), root))
 
         def refinement(node, i):
             if i in node.closure:
@@ -137,16 +155,22 @@ class Context:
                 if extension >= self.extents[j]:
                     closure.append(j)
 
-            return Node(generator, closure, extension, i, val, bound)
+            return Node(generator, closure, extension, i, val, bound, opt.val)
 
         while boundary:
-            current = boundary.popleft()
-            for a in range(current.gen_index + 1, self.n):
+            ops, current = boundary.popleft()
+            children = []
+            for a in ops:
                 child = refinement(current, a)
                 if child:
                     opt = max(opt, child, key=value)
                     yield child
-                    boundary.append(child)
+                    children += [child]
+            filtered = list(filter(lambda c: c.val_bound > opt.val, children))
+            ops = []
+            for child in reversed(filtered):
+                boundary.append((ops, child))
+                ops = [child.gen_index] + ops
 
 
 def cov_squared_dev(labels):
