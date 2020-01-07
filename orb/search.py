@@ -1,27 +1,24 @@
-from collections import deque, namedtuple
+from collections import deque
 from sortedcontainers import SortedSet
 from operator import attrgetter
 from math import inf
+import pandas as pd
 
-
-#_Node = namedtuple('_N', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound'])
 
 class Node:
 
-    def __init__(self, gen, clo, ext, idx, val, bnd, opt):
+    def __init__(self, gen, clo, ext, idx, val, bnd):
         self.generator = gen
         self.closure = clo
         self.extension = ext
         self.gen_index = idx
         self.val = val
         self.val_bound = bnd
-        self.opt = opt
 
     def __repr__(self):
-        return f'N({self.generator}, {self.closure}, {self.val:.5f}, {self.opt:.5f}/{self.val_bound:.5f})'
+        return f'N({self.generator}, {self.closure}, {self.val:.5g}, {self.val_bound:.5g}, {list(self.extension)})'
 
 
-#SearchNode = namedtuple('N', ['generator', 'closure', 'extension', 'gen_index', 'val', 'val_bound', 'opt_val'])
 value = attrgetter("val")
 
 
@@ -57,6 +54,64 @@ class Context:
         extents = [SortedSet([i for i in range(m) if table[i][j]]) for j in range(n)]
         return Context(list(range(n)), list(range(m)), extents)
 
+    @staticmethod
+    def from_df(df, max_col_attr=None):
+        """
+        Generates formal context from pandas dataframe by applying interordinal scaling to numerical data columns
+        and for object columns creating one attribute per value.
+
+        For interordinal scaling a maximum number of attributes per column can be specified. If required, threshold
+        values are then selected quantile-based.
+
+        The restriction should also be implemented for object columns in the future (by merging small categories
+        into disjunctive propositions).
+
+        The generated attributes correspond to pandas-compatible query strings. For example:
+
+        >>> titanic_df = pd.read_csv("../datasets/titanic/train.csv")
+        >>> titanic_df.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+        >>> titanic_ctx = Context.from_df(titanic_df, max_col_attr=6)
+        >>> titanic_ctx.m
+        891
+        >>> titanic_ctx.attributes
+        ['Survived<=0', 'Survived>=1', 'Pclass<=1', 'Pclass<=2', 'Pclass>=2', 'Pclass>=3', 'Sex=="male"', 'Sex=="female"', 'Age<=23.0', 'Age>=23.0', 'Age<=34.0', 'Age>=34.0', 'Age<=80.0', 'Age>=80.0', 'SibSp<=8.0', 'SibSp>=8.0', 'Parch<=6.0', 'Parch>=6.0', 'Fare<=8.6625', 'Fare>=8.6625', 'Fare<=26.0', 'Fare>=26.0', 'Fare<=512.3292', 'Fare>=512.3292', 'Embarked=="S"', 'Embarked=="C"', 'Embarked=="Q"', 'Embarked=="nan"']
+        >>> titanic_ctx.n
+        28
+
+        :param df: pandas dataframe to be converted to formal context
+        :param max_col_attr: maximum number of attributes generated per column
+        :return: context representing dataframe
+        """
+
+        attributes = []
+        extents = []
+        for c in df:
+            if df[c].dtype.kind in 'uif':
+                vals = df[c].unique()
+                reduced = False
+                if max_col_attr and len(vals)*2 > max_col_attr:
+                    _, vals = pd.qcut(df[c], q=max_col_attr // 2, retbins=True, duplicates='drop')
+                    vals = vals[1:]
+                    reduced = True
+                vals = sorted(vals)
+                for i, v in enumerate(vals):
+                    if reduced or i < len(vals) - 1:
+                        attributes += [f'{c}<={v}']
+                        le = df[c] <= v
+                        extents += [SortedSet([i for i in range(len(df[c])) if le[i]])]
+                    if reduced or i > 0:
+                        attributes += [f'{c}>={v}']
+                        ge = df[c] >= v
+                        extents += [SortedSet([i for i in range(len(df[c])) if ge[i]])]
+
+            if df[c].dtype.kind in 'O':
+                for v in df[c].unique():
+                    attributes += [f'{c}=="{v}"']
+                    eq = df[c] == v
+                    extents += [SortedSet([i for i in range(len(df[c])) if eq[i]])]
+
+        return Context(attributes, list(df.index), extents)
+
     def __init__(self, attributes, objects, extents):
         self.attributes = attributes
         self.objects = objects
@@ -88,7 +143,9 @@ class Context:
         >>> ctx = Context.from_tab(table)
         >>> search = ctx.bfs(lambda e: -len(e), lambda e: 1)
         >>> max(search, key=value)
-        Node(generator=[0, 3], closure=[0, 2, 3], extension=SortedSet([]), gen_index=3, val=0, val_bound=1)
+        N([0, 3], [0, 1, 2, 3], 0, 1, [])
+
+        ---> This looks like a bug! Why isn't the closure [0, 1, 2, 3]
 
         Let's use more realistic objective and bounding functions based on values associated with each
         object (row in the table).
@@ -98,8 +155,8 @@ class Context:
         >>> search = ctx.bfs(f, g)
         >>> for n in search:
         ...     print(n)
-        Node(generator=[], closure=[], extension=range(0, 4), gen_index=-1, val=0.0, val_bound=inf)
-        Node(generator=[0], closure=[0, 2], extension=SortedSet([1, 2]), gen_index=0, val=0.5, val_bound=0.5)
+        N([], [], 0, inf, [0, 1, 2, 3])
+        N([0], [0, 2], 0.5, 0.5, [1, 2])
 
         Finally, here is a complex example taken from the UdS seminar on subgroup discovery.
         >>> table = [[1, 1, 1, 1, 0],
@@ -115,6 +172,12 @@ class Context:
         >>> search = ctx.bfs(f, g)
         >>> for n in search:
         ...     print(n)
+        N([], [], 0, inf, [0, 1, 2, 3, 4, 5])
+        N([0], [0], 0.11111, 0.22222, [0, 1, 2, 5])
+        N([1], [1], -0.055556, 0.11111, [0, 1, 3, 5])
+        N([2], [2, 3], 0.11111, 0.22222, [0, 2, 3, 4])
+        N([3], [3], 0, 0.11111, [0, 3, 4])
+        N([0, 2], [0, 2], 0.22222, 0.22222, [0, 2])
 
         :param f: objective function
         :param g: bounding function satisfying that g(I) >= max {f(J): J >= I}
@@ -122,7 +185,7 @@ class Context:
         boundary = deque()
         full = self.extension([])
         root_val = f(full)
-        root = Node([], [], full, -1, root_val, inf, root_val)
+        root = Node([], [], full, -1, root_val, inf)
         opt = root
         yield root
         boundary.append((range(self.n), root))
@@ -155,7 +218,7 @@ class Context:
                 if extension >= self.extents[j]:
                     closure.append(j)
 
-            return Node(generator, closure, extension, i, val, bound, opt.val)
+            return Node(generator, closure, extension, i, val, bound)
 
         while boundary:
             ops, current = boundary.popleft()
