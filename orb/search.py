@@ -1,25 +1,31 @@
+import pandas as pd
+
 from collections import deque
 from sortedcontainers import SortedSet
-from operator import attrgetter
 from math import inf
-import pandas as pd
 
 
 class Node:
+    """
+    Represents a potential node (and incoming edge) for searches in the concept graph
+    with edges representing the direct prefix-preserving successor relation (dpps).
+    """
 
-    def __init__(self, gen, clo, ext, idx, val, bnd):
+    def __init__(self, gen, clo, ext, idx, crit_idx, val, bnd):
         self.generator = gen
         self.closure = clo
         self.extension = ext
         self.gen_index = idx
+        self.crit_idx = crit_idx
         self.val = val
         self.val_bound = bnd
+        self.valid = self.crit_idx > self.gen_index
 
     def __repr__(self):
         return f'N({self.generator}, {self.closure}, {self.val:.5g}, {self.val_bound:.5g}, {list(self.extension)})'
 
-
-value = attrgetter("val")
+    def value(self):
+        return self.val
 
 
 class Context:
@@ -57,10 +63,10 @@ class Context:
     @staticmethod
     def from_df(df, max_col_attr=None):
         """
-        Generates formal context from pandas dataframe by applying interordinal scaling to numerical data columns
+        Generates formal context from pandas dataframe by applying inter-ordinal scaling to numerical data columns
         and for object columns creating one attribute per value.
 
-        For interordinal scaling a maximum number of attributes per column can be specified. If required, threshold
+        For inter-ordinal scaling a maximum number of attributes per column can be specified. If required, threshold
         values are then selected quantile-based.
 
         The restriction should also be implemented for object columns in the future (by merging small categories
@@ -131,6 +137,38 @@ class Context:
 
         return result
 
+    def refinement(self, node, i, f, g, opt_val):
+        if i in node.closure:
+            return None
+
+        generator = node.generator + [i]
+        extension = node.extension & self.extents[i]
+
+        val = f(extension)
+        bound = g(extension)
+
+        if bound < opt_val:
+            return None
+
+        closure = []
+        for j in range(0, i):
+            if j in node.closure:
+                closure.append(j)
+            elif extension <= self.extents[j]:
+                return Node(generator, closure, extension, i, j, val, bound)
+
+        closure.append(i)
+
+        crit_idx = self.n
+        for j in range(i + 1, self.n):
+            if j in node.closure:
+                closure.append(j)
+            elif extension <= self.extents[j]:
+                crit_idx = min(crit_idx, self.n)
+                closure.append(j)
+
+        return Node(generator, closure, extension, i, crit_idx, val, bound)
+
     def bfs(self, f, g):
         """
         A first example with trivial objective and bounding function is as follows. In this example
@@ -142,7 +180,9 @@ class Context:
         ...          [0, 1, 0, 1]]
         >>> ctx = Context.from_tab(table)
         >>> search = ctx.bfs(lambda e: -len(e), lambda e: 1)
-        >>> max(search, key=value)
+        >>> #max(search, key=value)
+        >>> for n in search:
+        ...     print(n)
         N([0, 3], [0, 1, 2, 3], 0, 1, [])
 
         ---> This looks like a bug! Why isn't the closure [0, 1, 2, 3]
@@ -184,56 +224,28 @@ class Context:
         """
         boundary = deque()
         full = self.extension([])
-        root_val = f(full)
-        root = Node([], [], full, -1, root_val, inf)
+        root = Node([], [], full, -1, self.n, f(full), inf)
         opt = root
         yield root
         boundary.append((range(self.n), root))
-
-        def refinement(node, i):
-            if i in node.closure:
-                return None
-
-            generator = node.generator + [i]
-            extension = node.extension & self.extents[i]
-
-            val = f(extension)
-            bound = g(extension)
-
-            if bound < opt.val:
-                return None
-
-            closure = []
-            for j in range(0, i):
-                if j in node.closure:
-                    closure.append(j)
-                    continue
-
-                if extension >= self.extents[j]:
-                    return None
-
-            closure.append(i)
-
-            for j in range(i + 1, self.n):
-                if extension >= self.extents[j]:
-                    closure.append(j)
-
-            return Node(generator, closure, extension, i, val, bound)
 
         while boundary:
             ops, current = boundary.popleft()
             children = []
             for a in ops:
-                child = refinement(current, a)
+                child = self.refinement(current, a, f, g, opt.val)
                 if child:
-                    opt = max(opt, child, key=value)
-                    yield child
+                    if child.valid:
+                        opt = max(opt, child, key=Node.value)
+                        yield child
                     children += [child]
             filtered = list(filter(lambda c: c.val_bound > opt.val, children))
             ops = []
             for child in reversed(filtered):
-                boundary.append((ops, child))
                 ops = [child.gen_index] + ops
+                if child.valid:
+                    boundary.append((ops, child))
+
 
 
 def cov_squared_dev(labels):
