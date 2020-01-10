@@ -28,6 +28,84 @@ class Node:
         return self.val
 
 
+class Constraint:
+    """
+    Boolean condition on a single value with string representation. For example:
+    >>> t = 21
+    >>> c = Constraint.less_equals(21)
+    >>> c
+    Constraint(x<=21)
+    >>> format(c, 'age')
+    'age<=21'
+    >>> c(18)
+    True
+    >>> c(63)
+    False
+    """
+
+    def __init__(self, cond, str_repr=None):
+        self.cond = cond
+        self.str_repr = str_repr or (lambda vn: str(cond)+'('+vn+')')
+
+    def __call__(self, value):
+        return self.cond(value)
+
+    def __format__(self, varname):
+        return self.str_repr(varname)
+
+    def __repr__(self):
+        return 'Constraint('+format(self, 'x')+')'
+
+    @staticmethod
+    def less_equals(value):
+        return Constraint(lambda v: v <= value, lambda n: str(n)+'<='+str(value))
+
+    @staticmethod
+    def greater_equals(value):
+        return Constraint(lambda v: v >= value, lambda n: str(n)+'>='+str(value))
+
+    @staticmethod
+    def equals(value):
+        return Constraint(lambda v: v == value, lambda n: str(n)+'=='+str(value))
+
+
+class KeyValueProposition:
+    """
+    Callable proposition that represents constraint on value for some fixed key in a dict-like object
+    such as Pandas row series.
+
+    For example:
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> male = KeyValueProposition('Sex', Constraint.equals('male'))
+    >>> male
+    'Sex==male'
+    >>> titanic.iloc[10]
+    Survived         1
+    Pclass           3
+    Sex         female
+    Age              4
+    SibSp            1
+    Parch            1
+    Fare          16.7
+    Embarked         S
+    Name: 10, dtype: object
+    >>> male(titanic.iloc[10])
+    False
+    """
+
+    def __init__(self, key, constraint):
+        self.key = key
+        self.constraint = constraint
+        self.repr = format(constraint, key)
+
+    def __call__(self, row):
+        return self.constraint(row[self.key])
+
+    def __repr__(self):
+        return self.repr
+
+
 class Context:
     """
     Formal context, i.e., a binary relation between a set of objects and a set of attributes.
@@ -55,10 +133,17 @@ class Context:
         :param table:
         :return:
         """
+
+        def tab_feature(tab, j):
+            def feature(i):
+                return tab[i][j]
+
+            return feature
+
         m = len(table)
         n = len(table[0])
-        extents = [SortedSet([i for i in range(m) if table[i][j]]) for j in range(n)]
-        return Context(list(range(n)), list(range(m)), extents)
+        attributes = [tab_feature(table, j) for j in range(n)]
+        return Context(attributes, list(range(m)))
 
     @staticmethod
     def from_df(df, max_col_attr=None):
@@ -80,9 +165,16 @@ class Context:
         >>> titanic_ctx.m
         891
         >>> titanic_ctx.attributes
-        ['Survived<=0', 'Survived>=1', 'Pclass<=1', 'Pclass<=2', 'Pclass>=2', 'Pclass>=3', 'Sex=="male"', 'Sex=="female"', 'Age<=23.0', 'Age>=23.0', 'Age<=34.0', 'Age>=34.0', 'Age<=80.0', 'Age>=80.0', 'SibSp<=8.0', 'SibSp>=8.0', 'Parch<=6.0', 'Parch>=6.0', 'Fare<=8.6625', 'Fare>=8.6625', 'Fare<=26.0', 'Fare>=26.0', 'Fare<=512.3292', 'Fare>=512.3292', 'Embarked=="S"', 'Embarked=="C"', 'Embarked=="Q"', 'Embarked=="nan"']
+        [Survived<=0, Survived>=1, Pclass<=1, Pclass<=2, Pclass>=2, Pclass>=3, Sex==male, Sex==female, Age<=23.0, Age>=23.0, Age<=34.0, Age>=34.0, Age<=80.0, Age>=80.0, SibSp<=8.0, SibSp>=8.0, Parch<=6.0, Parch>=6.0, Fare<=8.6625, Fare>=8.6625, Fare<=26.0, Fare>=26.0, Fare<=512.3292, Fare>=512.3292, Embarked==S, Embarked==C, Embarked==Q, Embarked==nan]
         >>> titanic_ctx.n
         28
+        >>> titanic_df.query('Survived>=1 & Pclass>=3 & Sex=="male" & Age>=34')
+             Survived  Pclass   Sex   Age  SibSp  Parch   Fare Embarked
+        338         1       3  male  45.0      0      0  8.050        S
+        400         1       3  male  39.0      0      0  7.925        S
+        414         1       3  male  44.0      0      0  7.925        S
+        >>> titanic_ctx.extension([1, 5, 6, 11])
+        SortedSet([338, 400, 414])
 
         :param df: pandas dataframe to be converted to formal context
         :param max_col_attr: maximum number of attributes generated per column
@@ -90,7 +182,6 @@ class Context:
         """
 
         attributes = []
-        extents = []
         for c in df:
             if df[c].dtype.kind in 'uif':
                 vals = df[c].unique()
@@ -102,28 +193,22 @@ class Context:
                 vals = sorted(vals)
                 for i, v in enumerate(vals):
                     if reduced or i < len(vals) - 1:
-                        attributes += [f'{c}<={v}']
-                        le = df[c] <= v
-                        extents += [SortedSet([i for i in range(len(df[c])) if le[i]])]
+                        attributes += [KeyValueProposition(c, Constraint.less_equals(v))]
                     if reduced or i > 0:
-                        attributes += [f'{c}>={v}']
-                        ge = df[c] >= v
-                        extents += [SortedSet([i for i in range(len(df[c])) if ge[i]])]
+                        attributes += [KeyValueProposition(c, Constraint.greater_equals(v))]
 
             if df[c].dtype.kind in 'O':
-                for v in df[c].unique():
-                    attributes += [f'{c}=="{v}"']
-                    eq = df[c] == v
-                    extents += [SortedSet([i for i in range(len(df[c])) if eq[i]])]
+                attributes += [KeyValueProposition(c, Constraint.equals(v)) for v in df[c].unique()]
 
-        return Context(attributes, list(df.index), extents)
+        return Context(attributes, [df.iloc[i] for i in range(len(df.axes[0]))])
 
-    def __init__(self, attributes, objects, extents):
+    def __init__(self, attributes, objects):
         self.attributes = attributes
         self.objects = objects
-        self.extents = extents
         self.n = len(attributes)
         self.m = len(objects)
+        # for now we materialise the whole binary relation; in the future can be on demand
+        self.extents = [SortedSet([i for i in range(self.m) if attributes[j](objects[i])]) for j in range(self.n)]
 
     def extension(self, intent):
         """
