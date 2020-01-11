@@ -106,9 +106,38 @@ class KeyValueProposition:
         return self.repr
 
 
+class Conjunction:
+    """
+    >>> old = KeyValueProposition('age', Constraint.greater_equals(60))
+    >>> male = KeyValueProposition('sex', Constraint.equals('male'))
+    >>> high_risk = Conjunction([old, male])
+    >>> high_risk
+    age>=60 & sex==male
+    >>> stephanie = {'age': 30, 'sex': 'female'}
+    >>> erika = {'age': 72, 'sex': 'female'}
+    >>> ron = {'age': 67, 'sex': 'male'}
+    >>> high_risk(stephanie), high_risk(erika), high_risk(ron)
+    (False, False, True)
+    """
+
+    def __init__(self, props):
+        self.props = props
+        self.repr = str.join(" & ", sorted(map(str, props))) #''.join(props, sep=' & ')
+
+    def __call__(self, x):
+        return all(map(lambda p: p(x), self.props))
+
+    def __repr__(self):
+        return self.repr
+
+
 class Context:
     """
-    Formal context, i.e., a binary relation between a set of objects and a set of attributes.
+    Formal context, i.e., a binary relation between a set of objects and a set of attributes,
+    i.e., Boolean functions that are defined on the objects.
+
+    A formal context provides a search context (search space) over conjunctions that can be
+    formed from the individual attributes.
     """
 
     @staticmethod
@@ -209,6 +238,10 @@ class Context:
         self.m = len(objects)
         # for now we materialise the whole binary relation; in the future can be on demand
         self.extents = [SortedSet([i for i in range(self.m) if attributes[j](objects[i])]) for j in range(self.n)]
+
+    def search(self, f, g):
+        opt = max(self.bfs(f, g), key=Node.value)
+        return Conjunction(map(lambda i: self.attributes[i], opt.generator))
 
     def extension(self, intent):
         """
