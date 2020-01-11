@@ -106,6 +106,20 @@ class KeyValueProposition:
         return self.repr
 
 
+class TabulatedProposition:
+
+    def __init__(self, table, col_idx):
+        self.table = table
+        self.col_idx = col_idx
+        self.repr = 'c'+str(col_idx)
+
+    def __call__(self, row_idx):
+        return self.table[row_idx][self.col_idx]
+
+    def __repr__(self):
+        return self.repr
+
+
 class Conjunction:
     """
     >>> old = KeyValueProposition('age', Constraint.greater_equals(60))
@@ -122,7 +136,7 @@ class Conjunction:
 
     def __init__(self, props):
         self.props = props
-        self.repr = str.join(" & ", sorted(map(str, props))) #''.join(props, sep=' & ')
+        self.repr = str.join(" & ", sorted(map(str, props)))
 
     def __call__(self, x):
         return all(map(lambda p: p(x), self.props))
@@ -159,19 +173,13 @@ class Context:
         >>> list(ctx.extension([0, 2]))
         [1, 2]
 
-        :param table:
-        :return:
+        :param table: table that explicitly encodes object/attribute relation
+        :return: context over table row indices as objects and one tabulated feature per column index
         """
-
-        def tab_feature(tab, j):
-            def feature(i):
-                return tab[i][j]
-
-            return feature
 
         m = len(table)
         n = len(table[0])
-        attributes = [tab_feature(table, j) for j in range(n)]
+        attributes = [TabulatedProposition(table, j) for j in range(n)]
         return Context(attributes, list(range(m)))
 
     @staticmethod
@@ -298,12 +306,9 @@ class Context:
         ...          [0, 1, 0, 1]]
         >>> ctx = Context.from_tab(table)
         >>> search = ctx.bfs(lambda e: -len(e), lambda e: 1)
-        >>> #max(search, key=value)
         >>> for n in search:
         ...     print(n)
         N([0, 3], [0, 1, 2, 3], 0, 1, [])
-
-        ---> This looks like a bug! Why isn't the closure [0, 1, 2, 3]
 
         Let's use more realistic objective and bounding functions based on values associated with each
         object (row in the table).
@@ -336,6 +341,9 @@ class Context:
         N([2], [2, 3], 0.11111, 0.22222, [0, 2, 3, 4])
         N([3], [3], 0, 0.11111, [0, 3, 4])
         N([0, 2], [0, 2], 0.22222, 0.22222, [0, 2])
+
+        >>> ctx.search(f, g)
+        c0 & c2
 
         :param f: objective function
         :param g: bounding function satisfying that g(I) >= max {f(J): J >= I}
