@@ -432,6 +432,18 @@ def impact_count_mean(labels):
     return f
 
 
+class DfWrapper:
+
+    def __init__(self, df): self.df = df
+
+    def __getitem__(self, item): return self.df.iloc[item]
+
+    def __len__(self): return len(self.df)
+
+    def __iter__(self):
+        return (r for (_, r) in self.df.iterrows())
+
+
 class Impact:
     """
     Impact objective function for conjunctive queries with respect to a specific
@@ -451,17 +463,6 @@ class Impact:
     Sex==female
     """
 
-    class DfWrapper:
-
-        def __init__(self, df): self.df = df
-
-        def __getitem__(self, item): return self.df.iloc[item]
-
-        def __len__(self): return len(self.df)
-
-        def __iter__(self):
-            return (r for (_, r) in self.df.iterrows())
-
     def _mean(self, q):
         s, c = 0.0, 0.0
         for r in filter(q, self.data):
@@ -474,7 +475,7 @@ class Impact:
 
     def __init__(self, data, target):
         self.m = len(data)
-        self.data = Impact.DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
         self.target = target
         self.average = self._mean(lambda _: True)
 
@@ -482,13 +483,57 @@ class Impact:
         return self._coverage(q) * (self._mean(q) - self.average)
 
     def search(self):
-        ctx = Context.from_df(self.data.df, without=[self.target], max_col_attr=6)
+        ctx = Context.from_df(self.data.df, without=[self.target], max_col_attr=10)
         f = impact(self.data.df[self.target])
         g = cov_incr_mean_bound(self.data.df[self.target], impact_count_mean(self.data.df[self.target]))
         return ctx.search(f, g)
         # bfs = ctx.bfs(f, g)
         # for n in bfs:
         #     print(n)
+
+
+class SquaredLossObjective:
+    """
+    Rule boosting objective function for squared loss.
+
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> obj = SquaredLossObjective(titanic, 'Survived')
+    >>> female = Conjunction([KeyValueProposition('Sex', Constraint.equals('female'))])
+    >>> obj(female)
+    0.19404590848327577
+    >>> reg_obj = SquaredLossObjective(titanic, 'Survived', reg=2)
+    >>> reg_obj(female)
+    0.19342988972618597
+    """
+
+    def __init__(self, data, target, reg=0):
+        self.m = len(data)
+        self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        self.target = target
+        self.reg = reg
+
+    def f(self, count, mean):
+        return self._reg_term(count)*count/self.m * pow(mean, 2)
+
+    def _reg_term(self, c):
+        return 1 / (1 + self.reg / (2 * c))
+
+    def _count(self, q): #almost code duplication: Impact
+        return sum(1 for _ in filter(q, self.data))
+
+    def _mean(self, q): #code duplication: Impact
+        s, c = 0.0, 0.0
+        for r in filter(q, self.data):
+            s += r[self.target]
+            c += 1
+        return s/c
+
+    def __call__(self, q):
+        c = self._count(q)
+        m = self._mean(q)
+        return self.f(c, m)
+
 
 
 def impact(labels):
