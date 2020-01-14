@@ -79,7 +79,10 @@ class KeyValueProposition:
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
     >>> male = KeyValueProposition('Sex', Constraint.equals('male'))
     >>> male
-    'Sex==male'
+    Sex==male
+
+    ---> WARNING: string values need probably be quoted in representation to work as pandas query as intended
+
     >>> titanic.iloc[10]
     Survived         1
     Pclass           3
@@ -92,6 +95,14 @@ class KeyValueProposition:
     Name: 10, dtype: object
     >>> male(titanic.iloc[10])
     False
+
+    >>> male2 = KeyValueProposition('Sex', Constraint.equals('male'))
+    >>> female = KeyValueProposition('Sex', Constraint.equals('female'))
+    >>> infant = KeyValueProposition('Age', Constraint.less_equals(4))
+    >>> male == male2, male == infant
+    (True, False)
+    >>> male <= female, male >= female, age <= female
+    (False, True, True)
     """
 
     def __init__(self, key, constraint):
@@ -104,6 +115,9 @@ class KeyValueProposition:
 
     def __repr__(self):
         return self.repr
+
+    def __eq__(self, other):
+        return str(self) == str(other)
 
 
 class TabulatedProposition:
@@ -122,27 +136,42 @@ class TabulatedProposition:
 
 class Conjunction:
     """
+    Conjunctive aggregation of propositions.
+
+    For example:
     >>> old = KeyValueProposition('age', Constraint.greater_equals(60))
     >>> male = KeyValueProposition('sex', Constraint.equals('male'))
-    >>> high_risk = Conjunction([old, male])
-    >>> high_risk
-    age>=60 & sex==male
+    >>> high_risk = Conjunction([male, old])
     >>> stephanie = {'age': 30, 'sex': 'female'}
     >>> erika = {'age': 72, 'sex': 'female'}
     >>> ron = {'age': 67, 'sex': 'male'}
     >>> high_risk(stephanie), high_risk(erika), high_risk(ron)
     (False, False, True)
+
+    Elements can be accessed via index and are sorted lexicographically.
+    >>> high_risk
+    age>=60 & sex==male
+    >>> high_risk[0]
+    age>=60
+    >>> len(high_risk)
+    2
     """
 
     def __init__(self, props):
-        self.props = props
-        self.repr = str.join(" & ", sorted(map(str, props)))
+        self.props = sorted(props, key=str)
+        self.repr = str.join(" & ", map(str, self.props))
 
     def __call__(self, x):
         return all(map(lambda p: p(x), self.props))
 
     def __repr__(self):
         return self.repr
+
+    def __getitem__(self, item):
+        return self.props[item]
+
+    def __len__(self):
+        return len(self.props)
 
 
 class Context:
@@ -183,7 +212,7 @@ class Context:
         return Context(attributes, list(range(m)))
 
     @staticmethod
-    def from_df(df, max_col_attr=None):
+    def from_df(df, without = None, max_col_attr=None):
         """
         Generates formal context from pandas dataframe by applying inter-ordinal scaling to numerical data columns
         and for object columns creating one attribute per value.
@@ -218,8 +247,11 @@ class Context:
         :return: context representing dataframe
         """
 
+        without = without or []
         attributes = []
         for c in df:
+            if c in without:
+                continue
             if df[c].dtype.kind in 'uif':
                 vals = df[c].unique()
                 reduced = False
@@ -398,6 +430,65 @@ def impact_count_mean(labels):
         return c/n * (m - m0)
 
     return f
+
+
+class Impact:
+    """
+    Impact objective function for conjunctive queries with respect to a specific
+    dataset D and target variable y. Formally:
+
+    impact(q) = |ext(q)|/|D| (mean(y; ext(q)) - mean(y; D)) .
+
+    Accepts list-like, dict-like, and Pandas dataframe objects. For example:
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> old_male = Conjunction([KeyValueProposition('Age', Constraint.greater_equals(60)),
+    ...                         KeyValueProposition('Sex', Constraint.equals('male'))])
+    >>> imp_survival = Impact(titanic, 'Survived')
+    >>> imp_survival(old_male)
+    -0.006110487591969073
+    >>> imp_survival.search()
+    Sex==female
+    """
+
+    class DfWrapper:
+
+        def __init__(self, df): self.df = df
+
+        def __getitem__(self, item): return self.df.iloc[item]
+
+        def __len__(self): return len(self.df)
+
+        def __iter__(self):
+            return (r for (_, r) in self.df.iterrows())
+
+    def _mean(self, q):
+        s, c = 0.0, 0.0
+        for r in filter(q, self.data):
+            s += r[self.target]
+            c += 1
+        return s/c
+
+    def _coverage(self, q):
+        return sum(1 for _ in filter(q, self.data))/self.m
+
+    def __init__(self, data, target):
+        self.m = len(data)
+        self.data = Impact.DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        self.target = target
+        self.average = self._mean(lambda _: True)
+
+    def __call__(self, q):
+        return self._coverage(q) * (self._mean(q) - self.average)
+
+    def search(self):
+        ctx = Context.from_df(self.data.df, without=[self.target], max_col_attr=6)
+        f = impact(self.data.df[self.target])
+        g = cov_incr_mean_bound(self.data.df[self.target], impact_count_mean(self.data.df[self.target]))
+        return ctx.search(f, g)
+        # bfs = ctx.bfs(f, g)
+        # for n in bfs:
+        #     print(n)
 
 
 def impact(labels):
