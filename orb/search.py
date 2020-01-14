@@ -505,6 +505,8 @@ class SquaredLossObjective:
     >>> reg_obj = SquaredLossObjective(titanic, 'Survived', reg=2)
     >>> reg_obj(female)
     0.19342988972618597
+    >>> reg_obj.search()
+    Sex==female
     """
 
     def __init__(self, data, target, reg=0):
@@ -512,9 +514,10 @@ class SquaredLossObjective:
         self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
         self.target = target
         self.reg = reg
+        self.g = lambda x: x**2  # cov_mean_bound(data[target], lambda c, s: 0)
 
-    def f(self, count, mean):
-        return self._reg_term(count)*count/self.m * pow(mean, 2)
+    def _f(self, count, mean):
+        return self._reg_term(count)*count/self.m * pow(mean, 2) if count > 0 else 0.0
 
     def _reg_term(self, c):
         return 1 / (1 + self.reg / (2 * c))
@@ -529,11 +532,26 @@ class SquaredLossObjective:
             c += 1
         return s/c
 
+    def search(self):
+        # here we need the function in list of row indices; can we save some of these conversions?
+        def f(rows):
+            c = len(rows)
+            if c == 0:
+                return 0.0
+            m = sum(self.data[i][self.target] for i in rows) / c
+            return self._f(c, m)
+
+        # how can I extract the labels?
+        labels = [self.data[i][self.target] for i in range(self.m)]
+        g = cov_mean_bound(labels, lambda c, m: self._f(c, m))
+
+        ctx = Context.from_df(self.data.df, without=[self.target], max_col_attr=10)
+        return ctx.search(f, g)
+
     def __call__(self, q):
         c = self._count(q)
         m = self._mean(q)
-        return self.f(c, m)
-
+        return self._f(c, m)
 
 
 def impact(labels):
