@@ -514,10 +514,9 @@ class SquaredLossObjective:
         self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
         self.target = target
         self.reg = reg
-        self.g = lambda x: x**2  # cov_mean_bound(data[target], lambda c, s: 0)
 
     def _f(self, count, mean):
-        return self._reg_term(count)*count/self.m * pow(mean, 2) if count > 0 else 0.0
+        return self._reg_term(count)*count/self.m * pow(mean, 2)
 
     def _reg_term(self, c):
         return 1 / (1 + self.reg / (2 * c))
@@ -541,7 +540,6 @@ class SquaredLossObjective:
             m = sum(self.data[i][self.target] for i in rows) / c
             return self._f(c, m)
 
-        # how can I extract the labels?
         labels = [self.data[i][self.target] for i in range(self.m)]
         g = cov_mean_bound(labels, lambda c, m: self._f(c, m))
 

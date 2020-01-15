@@ -37,6 +37,43 @@ import numpy as np
 import pandas as pd
 from orb.branchbound import *
 
+from orb.search import Conjunction
+from orb.search import KeyValueProposition
+from orb.search import Constraint
+
+
+class Rule:
+    """
+    Represents a rule of the form "r(x) = y if q(x) else z"
+    for some binary query function q.
+
+    >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
+    >>> titanic[['Name', 'Sex', 'Survived']].iloc[0]
+    Name        Braund, Mr. Owen Harris
+    Sex                            male
+    Survived                          0
+    Name: 0, dtype: object
+    >>> titanic[['Name', 'Sex', 'Survived']].iloc[1]
+    Name        Cumings, Mrs. John Bradley (Florence Briggs Th...
+    Sex                                                    female
+    Survived                                                    1
+    Name: 1, dtype: object
+
+    >>> female = KeyValueProposition('Sex', Constraint.equals('female'))
+    >>> r = Rule(female, 1.0, 0.0)
+    >>> r(titanic.iloc[0]), r(titanic.iloc[1])
+    (0.0, 1.0)
+    """
+
+    def __init__(self, q, y=0, z=0):
+        self.q = q
+        self.y = y
+        self.z = z
+
+    def __call__(self, x):
+        return self.y if self.q(x) else self.z
+
+
 class Rule_Ensamble:
     def __init__(self, df, target_col, numeric_metric):
         self.df = df
@@ -134,6 +171,10 @@ def greater_than_equal(column, value):
     return Proposition(cond, column+'>='+str(value))
 
 def develop_proposition_set(dataframe, target_col, metrics_for_numeric = [median]):
+        """
+        >>> print(frame)
+        ''
+        """
         props = {}
         for col in dataframe.columns:
             if col != target_col:
