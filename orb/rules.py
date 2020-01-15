@@ -110,7 +110,7 @@ class AdditiveRuleEnsemble:
         return sum(r(x) for r in self.members)
 
     def __repr__(self):
-        return str.join(" +\n", (str(r) for r in self.members))
+        return str.join("\n", (str(r) for r in self.members))
 
     def fit(self, data, labels):
         self.members = []
