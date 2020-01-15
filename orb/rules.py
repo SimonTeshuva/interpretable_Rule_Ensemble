@@ -32,6 +32,8 @@ well with Pandas. For example:
 1  Russia  Moscow  17.1       143.5
 """
 
+import pandas as pd
+
 from orb.search import Conjunction
 from orb.search import KeyValueProposition
 from orb.search import Constraint
@@ -76,17 +78,17 @@ class Rule:
         return self.y if self.q(x) else self.z
 
     def __repr__(self):
-        return str(self.q) + " => " + str(self.y)
+        return f'{self.y:+10.4f} if {self.q}'
 
     def fit(self, data, target):
         """
-        :param df:
+        :param data:
         :param target:
         :return:
         """
         obj = SquaredLossObjective(data, target, reg=self.reg)
         self.q = obj.search()
-        self.y = obj.opt_value((target[i] for i in range(len(data)) if self.q(data.iloc[i])))
+        self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
 
 
 class AdditiveRuleEnsemble:
@@ -108,7 +110,7 @@ class AdditiveRuleEnsemble:
         return sum(r(x) for r in self.members)
 
     def __repr__(self):
-        return str.join(" + ", (str(r) for r in self.members))
+        return str.join(" +\n", (str(r) for r in self.members))
 
     def fit(self, data, labels):
         self.members = []
