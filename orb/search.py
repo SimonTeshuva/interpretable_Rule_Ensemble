@@ -498,13 +498,20 @@ class SquaredLossObjective:
 
     >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
-    >>> obj = SquaredLossObjective(titanic, 'Survived')
+    >>> obj = SquaredLossObjective(titanic, titanic['Survived'])
     >>> female = Conjunction([KeyValueProposition('Sex', Constraint.equals('female'))])
+    >>> first_class = Conjunction([KeyValueProposition('Pclass', Constraint.less_equals(1))])
     >>> obj(female)
     0.19404590848327577
-    >>> reg_obj = SquaredLossObjective(titanic, 'Survived', reg=2)
+    >>> reg_obj = SquaredLossObjective(titanic.drop(columns=['Survived']), titanic['Survived'], reg=2)
     >>> reg_obj(female)
     0.19342988972618597
+    >>> reg_obj(first_class)
+    0.09566220318908493
+    >>> reg_obj._mean(female)
+    0.7420382165605095
+    >>> reg_obj._mean(first_class)
+    0.6296296296296297
     >>> reg_obj.search()
     Sex==female
     """
@@ -526,9 +533,10 @@ class SquaredLossObjective:
 
     def _mean(self, q): #code duplication: Impact
         s, c = 0.0, 0.0
-        for r in filter(q, self.data):
-            s += r[self.target]
-            c += 1
+        for i in range(self.m):
+            if q(self.data[i]):
+                s += self.target[i]
+                c += 1
         return s/c
 
     def search(self):
@@ -537,13 +545,12 @@ class SquaredLossObjective:
             c = len(rows)
             if c == 0:
                 return 0.0
-            m = sum(self.data[i][self.target] for i in rows) / c
+            m = sum(self.target[i] for i in rows) / c
             return self._f(c, m)
 
-        labels = [self.data[i][self.target] for i in range(self.m)]
-        g = cov_mean_bound(labels, lambda c, m: self._f(c, m))
+        g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
 
-        ctx = Context.from_df(self.data.df, without=[self.target], max_col_attr=10)
+        ctx = Context.from_df(self.data.df, max_col_attr=10)
         return ctx.search(f, g)
 
     def __call__(self, q):
