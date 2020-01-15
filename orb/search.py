@@ -517,6 +517,11 @@ class SquaredLossObjective:
     """
 
     def __init__(self, data, target, reg=0):
+        """
+        :param data:
+        :param target: _series_ of target values of matching dimension
+        :param reg:
+        """
         self.m = len(data)
         self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
         self.target = target
@@ -552,6 +557,14 @@ class SquaredLossObjective:
 
         ctx = Context.from_df(self.data.df, max_col_attr=10)
         return ctx.search(f, g)
+
+    def opt_value(self, rows):
+        s, c = 0.0, 0
+        for i in rows:
+            s += self.target[i]
+            c += 1
+
+        return s / (self.reg/2 + c) if (c > 0 or self.reg > 0) else 0.0
 
     def __call__(self, q):
         c = self._count(q)

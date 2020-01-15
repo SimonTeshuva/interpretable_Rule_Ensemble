@@ -40,6 +40,7 @@ from orb.branchbound import *
 from orb.search import Conjunction
 from orb.search import KeyValueProposition
 from orb.search import Constraint
+from orb.search import SquaredLossObjective
 
 
 class Rule:
@@ -63,15 +64,33 @@ class Rule:
     >>> r = Rule(female, 1.0, 0.0)
     >>> r(titanic.iloc[0]), r(titanic.iloc[1])
     (0.0, 1.0)
+    >>> target = titanic.Survived
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
+    >>> opt = Rule()
+    >>> opt.fit(titanic, target)
+    >>> opt
     """
 
-    def __init__(self, q, y=0, z=0):
+    def __init__(self, q = lambda x: True, y=0.0, z=0.0):
         self.q = q
         self.y = y
         self.z = z
 
     def __call__(self, x):
         return self.y if self.q(x) else self.z
+
+    def __repr__(self):
+        return str(self.q) + " => " + str(self.y)
+
+    def fit(self, data, target):
+        """
+        :param df:
+        :param target:
+        :return:
+        """
+        obj = SquaredLossObjective(data, target)
+        self.q = obj.search()
+        self.y = obj.opt_value((target[i] for i in range(len(data)) if self.q(data.iloc[i])))
 
 
 class Rule_Ensamble:
