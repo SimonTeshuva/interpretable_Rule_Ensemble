@@ -96,7 +96,7 @@ class AdditiveRuleEnsemble:
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> target = titanic.Survived
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
-    >>> model = AdditiveRuleEnsemble()
+    >>> model = AdditiveRuleEnsemble(reg=50, k=4)
     >>> model.fit(titanic, target)
     >>> model
     """

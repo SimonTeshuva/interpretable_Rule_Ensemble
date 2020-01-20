@@ -279,9 +279,30 @@ class Context:
         # for now we materialise the whole binary relation; in the future can be on demand
         self.extents = [SortedSet([i for i in range(self.m) if attributes[j](objects[i])]) for j in range(self.n)]
 
+        # sort attribute in ascending order of extent size
+        attribute_order = list(sorted(range(self.n), key=lambda i: len(self.extents[i])))
+        self.attributes = [self.attributes[i] for i in attribute_order]
+        self.extents = [self.extents[i] for i in attribute_order]
+
     def search(self, f, g):
         opt = max(self.bfs(f, g), key=Node.value)
-        return Conjunction(map(lambda i: self.attributes[i], opt.generator))
+        min_generator = self.greedy_simplification(opt.closure, opt.extension)
+        return Conjunction(map(lambda i: self.attributes[i], min_generator))
+
+    def greedy_simplification(self, intent, extent):
+        to_cover = SortedSet([i for i in range(self.m) if i not in extent])
+        available = list(range(len(intent)))
+        covering = [SortedSet([i for i in range(self.m) if i not in self.extents[j]]) for j in intent]
+        result = []
+        while to_cover:
+            j = max(available, key=lambda i: len(covering[i]))
+            result += [intent[j]]
+            available.remove(j)
+            to_cover -= covering[j]
+            for l in available:
+                covering[l] -= covering[j]
+               
+        return result
 
     def extension(self, intent):
         """
