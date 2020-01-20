@@ -99,6 +99,10 @@ class AdditiveRuleEnsemble:
     >>> model = AdditiveRuleEnsemble(reg=50, k=4)
     >>> model.fit(titanic, target)
     >>> model
+    +0.6873 if Sex==female
+    +0.2570 if Fare>=10.5 & Pclass<=2
+    -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
+    +0.1324 if Pclass>=3 & Sex==male & SibSp<=1.0
     """
 
     def __init__(self, members=[], reg=0, k=3):
