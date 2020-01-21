@@ -184,7 +184,7 @@ class Context:
     """
 
     @staticmethod
-    def from_tab(table):
+    def from_tab(table, sort_attributes=False):
         """
         Converts an input table where each row represents an object into
         a formal context (which uses column-based representation).
@@ -209,10 +209,10 @@ class Context:
         m = len(table)
         n = len(table[0])
         attributes = [TabulatedProposition(table, j) for j in range(n)]
-        return Context(attributes, list(range(m)))
+        return Context(attributes, list(range(m)), sort_attributes)
 
     @staticmethod
-    def from_df(df, without = None, max_col_attr=None):
+    def from_df(df, without=None, max_col_attr=None, sort_attributes=True):
         """
         Generates formal context from pandas dataframe by applying inter-ordinal scaling to numerical data columns
         and for object columns creating one attribute per value.
@@ -227,7 +227,7 @@ class Context:
 
         >>> titanic_df = pd.read_csv("../datasets/titanic/train.csv")
         >>> titanic_df.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
-        >>> titanic_ctx = Context.from_df(titanic_df, max_col_attr=6)
+        >>> titanic_ctx = Context.from_df(titanic_df, max_col_attr=6, sort_attributes=False)
         >>> titanic_ctx.m
         891
         >>> titanic_ctx.attributes
@@ -244,6 +244,7 @@ class Context:
 
         :param df: pandas dataframe to be converted to formal context
         :param max_col_attr: maximum number of attributes generated per column
+        :param without: columns to ommit
         :return: context representing dataframe
         """
 
@@ -269,9 +270,9 @@ class Context:
             if df[c].dtype.kind in 'O':
                 attributes += [KeyValueProposition(c, Constraint.equals(v)) for v in df[c].unique()]
 
-        return Context(attributes, [df.iloc[i] for i in range(len(df.axes[0]))])
+        return Context(attributes, [df.iloc[i] for i in range(len(df.axes[0]))], sort_attributes)
 
-    def __init__(self, attributes, objects):
+    def __init__(self, attributes, objects, sort_attributes=True):
         self.attributes = attributes
         self.objects = objects
         self.n = len(attributes)
@@ -280,9 +281,10 @@ class Context:
         self.extents = [SortedSet([i for i in range(self.m) if attributes[j](objects[i])]) for j in range(self.n)]
 
         # sort attribute in ascending order of extent size
-        attribute_order = list(sorted(range(self.n), key=lambda i: len(self.extents[i])))
-        self.attributes = [self.attributes[i] for i in attribute_order]
-        self.extents = [self.extents[i] for i in attribute_order]
+        if sort_attributes:
+            attribute_order = list(sorted(range(self.n), key=lambda i: len(self.extents[i])))
+            self.attributes = [self.attributes[i] for i in attribute_order]
+            self.extents = [self.extents[i] for i in attribute_order]
 
     def search(self, f, g):
         opt = max(self.bfs(f, g), key=Node.value)
@@ -301,7 +303,7 @@ class Context:
             to_cover -= covering[j]
             for l in available:
                 covering[l] -= covering[j]
-               
+
         return result
 
     def extension(self, intent):
@@ -310,17 +312,35 @@ class Context:
         :return: indices of objects that have all attributes in intent in common
         """
         if not intent:
-            return range(len(self.objects))
+            return SortedSet(range(len(self.objects)))
 
         result = SortedSet.intersection(*map(lambda i: self.extents[i], intent))
 
         return result
 
     def refinement(self, node, i, f, g, opt_val):
+        """
+        >>> table = [[0, 1, 0, 1],
+        ...          [1, 1, 1, 0],
+        ...          [1, 0, 1, 0],
+        ...          [0, 1, 0, 1]]
+        >>> ctx = Context.from_tab(table)
+        >>> f, g = lambda e: -len(e), lambda e: 1
+        >>> root = Node([],[],SortedSet([0,1,2,3]), -1, -4, 1, inf)
+        >>> ref = ctx.refinement(root, 0, f, g, -4)
+        >>> ref.closure
+        [0, 2]
+        """
         if i in node.closure:
+            print(f"WARNING: redundant augmentation {self.attributes[i]}")
             return None
 
-        generator = node.generator + [i]
+#        if node.extension <= self.extents[i]:
+#           print(f"WARNING: redundant augmentation {self.attributes[i]}")
+
+        #generator = node.generator + [i]
+        generator = node.generator.copy()
+        generator.add(i)
         extension = node.extension & self.extents[i]
 
         val = f(extension)
@@ -346,7 +366,7 @@ class Context:
                 crit_idx = min(crit_idx, self.n)
                 closure.append(j)
 
-        return Node(generator, closure, extension, i, crit_idx, val, bound)
+        return Node(generator, SortedSet(closure), extension, i, crit_idx, val, bound)
 
     def bfs(self, f, g):
         """
@@ -403,7 +423,7 @@ class Context:
         """
         boundary = deque()
         full = self.extension([])
-        root = Node([], [], full, -1, self.n, f(full), inf)
+        root = Node(SortedSet([]), SortedSet([]), full, -1, self.n, f(full), inf)
         opt = root
         yield root
         boundary.append((range(self.n), root))
@@ -421,10 +441,11 @@ class Context:
             filtered = list(filter(lambda c: c.val_bound > opt.val, children))
             ops = []
             for child in reversed(filtered):
-                ops = [child.gen_index] + ops
                 if child.valid:
-                    boundary.append((ops, child))
-
+                    boundary.append(([i for i in ops if i not in child.closure], child))
+                # [i for i in ops if i not in child.closure]
+                #ops = [child.gen_index] + ops
+                ops = [child.gen_index] + ops
 
 
 def cov_squared_dev(labels):
@@ -565,7 +586,7 @@ class SquaredLossObjective:
                 c += 1
         return s/c
 
-    def search(self):
+    def search(self, max_col_attr=10):
         # here we need the function in list of row indices; can we save some of these conversions?
         def f(rows):
             c = len(rows)
@@ -576,7 +597,7 @@ class SquaredLossObjective:
 
         g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
 
-        ctx = Context.from_df(self.data.df, max_col_attr=10)
+        ctx = Context.from_df(self.data.df, max_col_attr=max_col_attr)
         return ctx.search(f, g)
 
     def opt_value(self, rows):

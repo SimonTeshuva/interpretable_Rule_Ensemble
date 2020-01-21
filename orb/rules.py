@@ -68,11 +68,12 @@ class Rule:
     >>> opt
     """
 
-    def __init__(self, q = lambda x: True, y=0.0, z=0.0, reg=0.0):
+    def __init__(self, q = lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10):
         self.q = q
         self.y = y
         self.z = z
         self.reg = reg
+        self.max_col_attr = max_col_attr
 
     def __call__(self, x):
         return self.y if self.q(x) else self.z
@@ -87,7 +88,7 @@ class Rule:
         :return:
         """
         obj = SquaredLossObjective(data, target, reg=self.reg)
-        self.q = obj.search()
+        self.q = obj.search(max_col_attr=self.max_col_attr)
         self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
 
 
@@ -99,16 +100,17 @@ class AdditiveRuleEnsemble:
     >>> model = AdditiveRuleEnsemble(reg=50, k=4)
     >>> model.fit(titanic, target)
     >>> model
-    +0.6873 if Sex==female
-    +0.2570 if Fare>=10.5 & Pclass<=2
-    -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
-    +0.1324 if Pclass>=3 & Sex==male & SibSp<=1.0
+       +0.6873 if Sex==female
+       +0.2570 if Fare>=10.5 & Pclass<=2
+       -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
+       +0.1324 if Pclass>=3 & Sex==male & SibSp<=1.0
     """
 
-    def __init__(self, members=[], reg=0, k=3):
+    def __init__(self, members=[], reg=0, k=3, max_col_attr=10):
         self.reg = reg
         self.members = members
         self.k = k
+        self.max_col_attr = max_col_attr
 
     def __call__(self, x):
         return sum(r(x) for r in self.members)
