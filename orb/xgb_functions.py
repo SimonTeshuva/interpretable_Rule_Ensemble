@@ -4,6 +4,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_squared_error
 from orb.data_preprocessing import prep_data
 
+
 def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
     """
     >>> fn1 = "titanic"
@@ -32,14 +33,16 @@ def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
     :return:
     """
 
-    if model_type == "Classifier":
-        model = xgb.XGBClassifier(max_depth=d, n_estimators=k, verbosity = 0, objective='reg:squarederror',reg_lambda=ld)
-    elif model_type == "Regressor":
-        model = xgb.XGBRegressor(max_depth=d, n_estimators=k, verbosity = 0, objective='reg:squarederror',reg_lambda=ld)
-
     [X_train, Y_train, X_test, Y_test] = data
-    model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric="auc", eval_set=[(X_test, Y_test)], verbose=False)
 
+    if model_type == "Classifier":
+        model = xgb.XGBClassifier(max_depth=d, n_estimators=k, verbosity=0, objective='binary:logistic', reg_lambda=ld)
+        eval_metric = "logloss"
+    elif model_type == "Regressor":
+        model = xgb.XGBRegressor(max_depth=d, n_estimators=k, verbosity=0, objective='reg:squarederror', reg_lambda=ld)
+        eval_metric = "squarederror"
+
+    model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric=eval_metric, eval_set=[(X_test, Y_test)], verbose=False)
 
     preds = model.predict(X_train)
     train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
@@ -55,6 +58,7 @@ def count_trees(xgb_model):
     trees = xgb_model.get_booster().get_dump()
     trees = [tree.split('\n') for tree in trees]
     return len(trees)
+
 
 def count_nodes(xgb_model):
     trees = xgb_model.get_booster().get_dump()

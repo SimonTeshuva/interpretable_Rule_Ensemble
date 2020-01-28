@@ -529,9 +529,6 @@ class Impact:
         f = impact(self.data.df[self.target])
         g = cov_incr_mean_bound(self.data.df[self.target], impact_count_mean(self.data.df[self.target]))
         return ctx.search(f, g)
-        # bfs = ctx.bfs(f, g)
-        # for n in bfs:
-        #     print(n)
 
 
 class SquaredLossObjective:

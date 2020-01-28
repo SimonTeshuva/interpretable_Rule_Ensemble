@@ -5,6 +5,7 @@ from orb.data_preprocessing import prep_data
 from orb.xgb_functions import generate_xgb_model
 from orb.xgb_functions import count_nodes
 
+
 def exp(fn, target=None, without=[], target_labels = [], path="", model_class = "xgboost", clear_results = False): # add model type in results
     """
     >>> fn = "halloween_candy_ranking"
@@ -55,12 +56,14 @@ def exp(fn, target=None, without=[], target_labels = [], path="", model_class = 
     if testing == True:
         read_results()
 
+
 def read_results():
     res_df = pd.read_pickle("./results.pkl") #open old results
     pd.set_option('display.max_columns', 10)
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         print(res_df)
     res_df.to_pickle("./results.pkl") #save current results table
+
 
 def dataset_signature(dataset_name):
 #    data = {dataset_name: (target, without)}
@@ -88,6 +91,7 @@ def dataset_signature(dataset_name):
     target_labels = dataset_info[2]
     return target, without, target_labels
 
+
 def exp_on_all_datasets(datasets):
     first = True
     for fn in datasets:
@@ -109,5 +113,7 @@ if __name__ == "__main__":
     # "gdp_vs_satisfaction": raise XGBoostError(py_str(_LIB.XGBGetLastError()))
     # xgboost.core.XGBoostError: [16:34:12] D:\Build\xgboost\xgboost-0.90.git\src\metric\rank_metric.cc:200: Check failed: !auc_error: AUC: the dataset only contains pos or neg samples
 
-    debugging_datasets = ["advertising", "titanic"]
-    exp_on_all_datasets(debugging_datasets)
+    #debugging_datasets = ["advertising", "titanic"]
+    #exp_on_all_datasets(debugging_datasets)
+    read_results()
+
