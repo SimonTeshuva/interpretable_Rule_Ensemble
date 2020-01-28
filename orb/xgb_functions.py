@@ -9,11 +9,20 @@ def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
     >>> fn1 = "titanic"
     >>> target = "Survived"
     >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
-    >>> [X_train, Y_train, X_test, Y_test] = prep_data(fn1, target, without)
+    >>> [X_train, Y_train, X_test, Y_test], target_name = prep_data(fn1, target, without)
     >>> data = [X_train, Y_train, X_test, Y_test]
     >>> model, train_rmse, test_rmse = generate_xgb_model(3, 3, 3, data, model_type="Regressor")
     >>> train_rmse < 0.5 and train_rmse >0.4
     True
+
+    >>> dsname = "halloween_candy_ranking"
+    >>> target = "winpercent"
+    >>> without = ['competitorname']
+    >>> [X_train, Y_train, X_test, Y_test], target_name = prep_data(dsname, target, without)
+    >>> data = [X_train, Y_train, X_test, Y_test]
+    >>> model, train_rmse, test_rmse = generate_xgb_model(3, 3, 3, data, model_type="Regressor")
+
+
 
     :param k:
     :param d:
@@ -52,3 +61,4 @@ def count_nodes(xgb_model):
     trees = [tree.split('\n') for tree in trees]
     nodes = sum([len(tree) for tree in trees])
     return nodes
+
