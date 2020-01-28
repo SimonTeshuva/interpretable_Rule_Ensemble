@@ -30,7 +30,7 @@ train_xgb = encoder.fit_transform(train_xgb)
 test_xgb = encoder.transform(test_xgb)
 
 print("Fitting tree ensemble...")
-trees = XGBClassifier(n_estimators=4, reg_lambda=10, gamma=0.1, verbosity=2)
+trees = XGBClassifier(n_estimators=10, max_depth=1, reg_lambda=10, gamma=0.1, verbosity=2)
 trees.fit(train_xgb, train_target)
 
 trees_prediction = trees.predict(test_xgb)
