@@ -6,7 +6,7 @@ from orb.xgb_functions import generate_xgb_model
 from orb.xgb_functions import count_nodes
 
 
-def exp(fn, target=None, without=[], target_labels = [], path="", model_class = "xgboost", clear_results = False): # add model type in results
+def exp(fn, target=None, without=[], target_labels = [], path="", model_class="xgboost", clear_results=False): # add model type in results
     """
     >>> fn = "halloween_candy_ranking"
     >>> target = "winpercent"
@@ -34,11 +34,11 @@ def exp(fn, target=None, without=[], target_labels = [], path="", model_class = 
             for ld in [1,10,100]: # [1,10,100]
                 # alternative, don't do with if block, feed model class as function input rather than model class's name
                 if model_class == "xgboost":
-                    model, train_RMSE,test_RMSE = generate_xgb_model(k, d, ld, data)
+                    model, train_RMSE, test_RMSE = generate_xgb_model(k, d, ld, data)
                     model_complexity = count_nodes(model)
                 elif model_class == "rule_ensamble":
                     # swap for a call to rule ensamble searcher
-                    model, train_RMSE,test_RMSE = generate_xgb_model(k, d, ld, data)
+                    model, train_RMSE, test_RMSE = generate_xgb_model(k, d, ld, data)
                     model_complexity = count_nodes(model)
                 else:
                     # swap for a call to some other learner
@@ -102,7 +102,7 @@ def exp_on_all_datasets(datasets):
 
 if __name__ == "__main__":
     # split target into ranges.
-    datasets =  ["advertising", "avocado_prices", "cdc_physical_activity_obesity", "gdp_vs_satisfaction",
+    datasets = ["advertising", "avocado_prices", "cdc_physical_activity_obesity", "gdp_vs_satisfaction",
                  "halloween_candy_ranking","metacritic_games", "random_regression", "red_wine_quality",
                  "suicide_rates", "titanic", "us_minimum_wage_by_state", "used_cars","wages_demographics",
                  "who_life_expectancy", "world_happiness_indicator"]
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     # "gdp_vs_satisfaction": raise XGBoostError(py_str(_LIB.XGBGetLastError()))
     # xgboost.core.XGBoostError: [16:34:12] D:\Build\xgboost\xgboost-0.90.git\src\metric\rank_metric.cc:200: Check failed: !auc_error: AUC: the dataset only contains pos or neg samples
 
-    #debugging_datasets = ["advertising", "titanic"]
-    #exp_on_all_datasets(debugging_datasets)
-    read_results()
+    debugging_datasets = ["advertising", "titanic"]
+    exp_on_all_datasets(debugging_datasets)
+    #read_results()
 
