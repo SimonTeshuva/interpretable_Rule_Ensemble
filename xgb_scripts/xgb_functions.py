@@ -1,8 +1,7 @@
-import pandas as pd
 import numpy as np
 import xgboost as xgb
 from sklearn.metrics import mean_squared_error
-from orb.data_preprocessing import prep_data
+from data_processing.data_preprocessing import prep_data
 
 
 def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
@@ -23,8 +22,6 @@ def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
     >>> data = [X_train, Y_train, X_test, Y_test]
     >>> model, train_rmse, test_rmse = generate_xgb_model(3, 3, 3, data, model_type="Regressor")
 
-
-
     :param k:
     :param d:
     :param ld:
@@ -42,7 +39,11 @@ def generate_xgb_model(k, d, ld, data, model_type="Regressor"):
         model = xgb.XGBRegressor(max_depth=d, n_estimators=k, verbosity=0, objective='reg:squarederror', reg_lambda=ld)
         eval_metric = "squarederror"
 
-    model.fit(X_train, Y_train, early_stopping_rounds=10, eval_metric=eval_metric, eval_set=[(X_test, Y_test)], verbose=False)
+    model.fit(X_train, Y_train, early_stopping_rounds=10, eval_set=[(X_test, Y_test)], verbose=False)
+
+
+  #  model = xgb.XGBRegressor(max_depth=d, n_estimators=k, verbosity=0, objective='reg:squarederror', reg_lambda=ld)
+   # model.fit(X_train, Y_train, early_stopping_rounds=10, eval_set=[(X_test, Y_test)], verbose=False)
 
     preds = model.predict(X_train)
     train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
@@ -66,3 +67,27 @@ def count_nodes(xgb_model):
     nodes = sum([len(tree) for tree in trees])
     return nodes
 
+"""
+def save_xgb_model(model, dataset_name, param_name, iteration_number, experiment_timestamp):
+    result_directory_models = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp, param_name, "models")
+    try:
+        os.makedirs(result_directory_models)
+    except FileExistsError:
+        pass
+    model.save_model(os.path.join(result_directory_models, str(iteration_number) + param_name))
+
+def save_xgb_trees(model, dataset_name, param_name, iteration_number, experiment_timestamp):
+    result_directory_trees = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp, param_name, "trees")
+    try:
+        os.makedirs(result_directory_trees)
+    except FileExistsError:
+        pass
+    estimators = count_trees(model)
+    for i in range(count_trees(model)):
+        tree_dir = os.path.join(result_directory_trees, str(estimators) + "estimators" + str(i)+".pdf")
+        tree = xgb.plot_tree(model, num_trees=i)
+        plt.savefig(tree_dir, dpi=1000, facecolor='w', edgecolor='w',
+                    orientation='portrait', papertype=None, format=None,
+                    transparent=False, bbox_inches=None, pad_inches=0.1,
+                    frameon=None, metadata=None)
+"""

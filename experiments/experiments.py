@@ -1,10 +1,45 @@
 import os
+
 import pandas as pd
+import matplotlib.pyplot as plt
 
-from orb.data_preprocessing import prep_data
-from orb.xgb_functions import generate_xgb_model
-from orb.xgb_functions import count_nodes
+from datetime import datetime
 
+from data_processing.data_preprocessing import prep_data
+from data_processing.data_preprocessing import prep_data_rule_learner
+from data_processing.data_preprocessing import prep_data_rule_learner_simple
+from orb.rules import AdditiveRuleEnsemble
+
+from xgb_scripts.xgb_functions import generate_xgb_model
+from xgb_scripts.xgb_functions import count_nodes
+
+def rules_rmse(rules, test, test_target, n_test):
+    rules_prediction = [rules(test.iloc[i]) for i in range(n_test)]
+    rmse = sum([(test_target[i] - rules_prediction[i])**2 for i in range(n_test)])**0.5
+    return rmse
+
+def rules_exp(dataset_name, target = None, without = [], k=4, reg=50):
+    """
+    >>> dataset_name = "titanic"
+    >>> target = "Survived"
+    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    >>> rules, rules_accuracy = rules_exp(dataset_name, target, without)
+    >>> rules_accuracy>0.7
+    True
+    """
+
+    train, test, train_target, test_target, n_test, n_train = prep_data_rule_learner(dataset_name, target, without)
+
+    rules = AdditiveRuleEnsemble(k, reg)
+    rules.fit(train, train_target)
+
+    rmse = rules_rmse(rules, test, test_target, n_test)
+    return rules, rmse
+
+dataset_name = "titanic"
+target = "Survived"
+without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+rules, rules_accuracy = rules_exp(dataset_name, target, without)
 
 def exp(fn, target=None, without=[], target_labels = [], path="", model_class="xgboost", clear_results=False, k_vals = [3], d_vals = [3], ld_vals = [10]):
     """
@@ -24,7 +59,7 @@ def exp(fn, target=None, without=[], target_labels = [], path="", model_class="x
     if clear_results:
         res_df = pd.DataFrame(columns=['dataset', 'target', 'no_feat', 'no_rows', 'tr_RMSE', 'te_RMSE', 'model_class', 'model_complexity', 'k', 'd', 'l'])
     else:
-        res_df = pd.read_pickle("./results.pkl")  # open old results
+        res_df = pd.read_pickle("results/results.pkl")  # open old results
 
     [X_train, Y_train, X_test, Y_test], target_name = prep_data(fn, target, without)
     data = [X_train, Y_train, X_test, Y_test]
@@ -56,9 +91,11 @@ def exp(fn, target=None, without=[], target_labels = [], path="", model_class="x
     if testing == True:
         read_results()
 
+    return exp_res
+
 
 def read_results():
-    res_df = pd.read_pickle("./results.pkl") #open old results
+    res_df = pd.read_pickle("results/results.pkl") #open old results
     res_df.to_csv('results.csv')
     pd.set_option('display.max_columns', 10)
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
@@ -100,7 +137,54 @@ def exp_on_all_datasets(datasets, k_vals = [3], d_vals = [3], ld_vals = [10]):
         exp(fn, target, without, path="", model_class="xgboost", clear_results=first, k_vals=k_vals, d_vals=d_vals, ld_vals=ld_vals)
         first = False
 
+def exp_on_all_datasets_rules(datasets, k_vals = [3], d_vals = [3], ld_vals = [10]):
+    first = True
+    for fn in datasets:
+        print(fn)
+        target, without = dataset_signature(fn)
+        xgb_res = exp(fn, target, without, path="", model_class="xgboost", clear_results=first, k_vals=k_vals, d_vals=d_vals, ld_vals=ld_vals)
+        rules_res = rules_exp(fn, target, without)
+        first = False
 
+"""
+def get_timestamp():
+    now = datetime.now()
+    timestamp = datetime.timestamp(now)
+    dt_object = str(datetime.fromtimestamp(timestamp))
+
+    dt_object = dt_object.replace(" ", "_")
+    dt_object= dt_object.replace(":", "_")
+    dt_object = dt_object.replace("-", "_")
+    return dt_object
+
+
+def generate_interpretability_curve(error, interpretability, x_name, y_name, title_name, dataset_name,
+                                    experiment_timestamp, param_name):
+    result_directory_curves = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp,
+                                           param_name, "plots")
+    try:
+        os.makedirs(result_directory_curves)
+    except FileExistsError:
+        pass
+    tree_dir = os.path.join(result_directory_curves, "interpretability_curve.pdf")
+
+    plt.figure(0)
+
+    plt.plot(interpretability, error)
+    plt.xlabel(x_name)
+    plt.ylabel(y_name)
+    plt.title(title_name)
+
+    plt.savefig(tree_dir, dpi=300, facecolor='w', edgecolor='w',
+                orientation='portrait', papertype=None, format=None,
+                transparent=False, bbox_inches=None, pad_inches=0.1,
+                frameon=None, metadata=None)
+
+    print("\n\n\n\n curve plotted and saved \n\n\n\n\n")
+    for i in range(len(error)):
+        print(error[i], interpretability[i])
+
+"""
 if __name__ == "__main__":
     # split target into ranges.
     datasets = ["advertising", "avocado_prices", "cdc_physical_activity_obesity", "gdp_vs_satisfaction",
@@ -123,3 +207,4 @@ if __name__ == "__main__":
 #    exp_on_all_datasets(small_datasets)
     exp_on_all_datasets(small_datasets, k_vals, d_vals, ld_vals)
     read_results()
+
