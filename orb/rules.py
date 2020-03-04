@@ -121,7 +121,7 @@ class AdditiveRuleEnsemble:
     def fit(self, data, labels):
         self.members = []
         while len(self.members) < self.k:
-            res = [labels[i] - self(data.iloc[i]) for i in range(len(data))]
+            res = [labels.iloc[i] - self(data.iloc[i]) for i in range(len(data))]
             r = Rule(reg=self.reg)
             r.fit(data, res)
             self.members += [r]

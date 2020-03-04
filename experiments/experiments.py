@@ -7,7 +7,8 @@ from datetime import datetime
 
 from data_processing.data_preprocessing import prep_data
 from data_processing.data_preprocessing import prep_data_rule_learner
-from data_processing.data_preprocessing import prep_data_rule_learner_simple
+from data_processing.data_preprocessing import prep_data_rule_learner_better
+from data_processing.data_preprocessing import prep
 from orb.rules import AdditiveRuleEnsemble
 
 from xgb_scripts.xgb_functions import generate_xgb_model
@@ -15,7 +16,7 @@ from xgb_scripts.xgb_functions import count_nodes
 
 def rules_rmse(rules, test, test_target, n_test):
     rules_prediction = [rules(test.iloc[i]) for i in range(n_test)]
-    rmse = sum([(test_target[i] - rules_prediction[i])**2 for i in range(n_test)])**0.5
+    rmse = sum([(test_target.iloc[i] - rules_prediction[i])**2 for i in range(n_test)])**0.5
     return rmse
 
 def rules_exp(dataset_name, target = None, without = [], k=4, reg=50):
@@ -26,9 +27,17 @@ def rules_exp(dataset_name, target = None, without = [], k=4, reg=50):
     >>> rules, rules_accuracy = rules_exp(dataset_name, target, without)
     >>> rules_accuracy>0.7
     True
+
+    >>> dataset_name = "metacritic_games"
+    >>> target = "user_score"
+    >>> without = ["GameID",	"name",	"players",	"attribute",	"release_date",	"link"]
+    >>> rules, rules_accuracy = rules_exp(dataset_name, target, without)
+    >>> rules_accuracy > 0.7
+    True
+
     """
 
-    train, test, train_target, test_target, n_test, n_train = prep_data_rule_learner(dataset_name, target, without)
+    train, test, train_target, test_target, n_test, n_train = prep_data_rule_learner_better(dataset_name, target, without)
 
     rules = AdditiveRuleEnsemble(k, reg)
     rules.fit(train, train_target)
@@ -36,17 +45,12 @@ def rules_exp(dataset_name, target = None, without = [], k=4, reg=50):
     rmse = rules_rmse(rules, test, test_target, n_test)
     return rules, rmse
 
-dataset_name = "titanic"
-target = "Survived"
-without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
-rules, rules_accuracy = rules_exp(dataset_name, target, without)
 
-def exp(fn, target=None, without=[], target_labels = [], path="", model_class="xgboost", clear_results=False, k_vals = [3], d_vals = [3], ld_vals = [10]):
+def exp(fn, target=None, without=[], model_class="xgboost", clear_results=False, k_vals = [3], d_vals = [3], ld_vals = [10]):
     """
     >>> fn = "halloween_candy_ranking"
     >>> target = "winpercent"
     >>> without = ['competitorname']
-    >>> target_labels = ['very bad', 'bad', 'average', 'good','very good']
     >>> exp(fn, target, without)
 
     :param fn:
