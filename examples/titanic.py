@@ -6,7 +6,6 @@ from sklearn.preprocessing import OneHotEncoder
 
 from xgboost import XGBClassifier
 from orb.rules import AdditiveRuleEnsemble
-from data_processing.data_preprocessing import prep_data_rule_learner as prep
 
 imputer = SimpleImputer(strategy="most_frequent")
 encoder = OneHotEncoder(handle_unknown='ignore')

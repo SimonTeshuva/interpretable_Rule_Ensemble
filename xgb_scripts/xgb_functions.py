@@ -1,8 +1,6 @@
 import numpy as np
 import xgboost as xgb
 from sklearn.metrics import mean_squared_error
-from data_processing.data_preprocessing import prep_data
-
 
 def generate_xgb_model(data, k, d, ld, model_type="Regressor"):
     """
