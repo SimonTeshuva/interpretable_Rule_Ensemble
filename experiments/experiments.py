@@ -2,13 +2,11 @@ import os
 
 import pandas as pd
 import matplotlib.pyplot as plt
+import sys
 
 from datetime import datetime
 
-from data_processing.data_preprocessing import prep_data
-from data_processing.data_preprocessing import prep_data_rule_learner
-from data_processing.data_preprocessing import prep_data_rule_learner_better
-from data_processing.data_preprocessing import prep
+from data_processing.data_preprocessing import prep_data as prep
 from orb.rules import AdditiveRuleEnsemble
 
 from xgb_scripts.xgb_functions import generate_xgb_model
@@ -18,84 +16,6 @@ def rules_rmse(rules, test, test_target, n_test):
     rules_prediction = [rules(test.iloc[i]) for i in range(n_test)]
     rmse = sum([(test_target.iloc[i] - rules_prediction[i])**2 for i in range(n_test)])**0.5
     return rmse
-
-def rules_exp(dataset_name, target = None, without = [], k=4, reg=50):
-    """
-    >>> dataset_name = "titanic"
-    >>> target = "Survived"
-    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
-    >>> rules, rules_accuracy = rules_exp(dataset_name, target, without)
-    >>> rules_accuracy>0.7
-    True
-
-    >>> dataset_name = "metacritic_games"
-    >>> target = "user_score"
-    >>> without = ["GameID",	"name",	"players",	"attribute",	"release_date",	"link"]
-    >>> rules, rules_accuracy = rules_exp(dataset_name, target, without)
-    >>> rules_accuracy > 0.7
-    True
-
-    """
-
-    train, test, train_target, test_target, n_test, n_train = prep_data_rule_learner_better(dataset_name, target, without)
-
-    rules = AdditiveRuleEnsemble(k, reg)
-    rules.fit(train, train_target)
-
-    rmse = rules_rmse(rules, test, test_target, n_test)
-    return rules, rmse
-
-
-def exp(fn, target=None, without=[], model_class="xgboost", clear_results=False, k_vals = [3], d_vals = [3], ld_vals = [10]):
-    """
-    >>> fn = "halloween_candy_ranking"
-    >>> target = "winpercent"
-    >>> without = ['competitorname']
-    >>> exp(fn, target, without)
-
-    :param fn:
-    :param target:
-    :param without:
-    :param path:
-    :param clear_results:
-    :return:
-    """
-    if clear_results:
-        res_df = pd.DataFrame(columns=['dataset', 'target', 'no_feat', 'no_rows', 'tr_RMSE', 'te_RMSE', 'model_class', 'model_complexity', 'k', 'd', 'l'])
-    else:
-        res_df = pd.read_pickle("results/results.pkl")  # open old results
-
-    [X_train, Y_train, X_test, Y_test], target_name = prep_data(fn, target, without)
-    data = [X_train, Y_train, X_test, Y_test]
-
-    for k in k_vals:
-        for d in d_vals:
-            for ld in ld_vals:
-                # alternative, don't do with if block, feed model class as function input rather than model class's name
-                if model_class == "xgboost":
-                    model, train_RMSE, test_RMSE = generate_xgb_model(k, d, ld, data)
-                    model_complexity = count_nodes(model)
-                elif model_class == "rule_ensamble":
-                    # swap for a call to rule ensamble searcher
-                    model, train_RMSE, test_RMSE = generate_xgb_model(k, d, ld, data)
-                    model_complexity = count_nodes(model)
-                else:
-                    # swap for a call to some other learner
-                    model, train_RMSE, test_RMSE = generate_xgb_model(k, d, ld, data)
-                    model_complexity = count_nodes(model)
-
-                exp_res = {"dataset": fn, "target": target_name, "no_feat": len(X_train.columns),
-                           "no_rows": Y_train.shape[0] + Y_test.shape[0], "tr_RMSE": train_RMSE, "te_RMSE": test_RMSE,
-                           'model_class': model_class, "model_complexity": model_complexity, 'k': k, 'd': d, 'l': ld}
-                res_df = res_df.append(exp_res, ignore_index=True)
-
-    res_df.to_pickle("./results.pkl", protocol=4) #save current results table
-
-    testing = False
-    if testing == True:
-        read_results()
-
-    return exp_res
 
 
 def read_results():
@@ -132,23 +52,168 @@ def dataset_signature(dataset_name):
     without = dataset_info[1]
     return target, without
 
+def next_lex(max_vals, current_val):
+    """
+    >>> next_lex([1,2,3], [1,2])
+    <class 'ValueError'>
+    >>> next_lex([1,2,3], [1,2,2])
+    [1, 2, 3]
+    >>> next_lex([1,2,3], [1,2,3])
+    [1, 2, 3]
+    >>> next_lex([1,2,3], [1,1,3])
+    [1, 2, 0]
+    >>> next_lex([1,2,3], [0,2,3])
+    [1, 0, 0]
+    """
+    incremented = False
+    pos = len(max_vals)-1
+    if len(max_vals)!=len(current_val):
+        return ValueError
+    if current_val==max_vals:
+        return current_val
+    while not incremented:
+        if current_val[pos] < max_vals[pos]:
+            current_val[pos]+=1
+            incremented=True
+        elif current_val[pos] == max_vals[pos]:
+            current_val[pos]=0
+            pos-=1
+        else:
+            return ValueError
+    return current_val
 
-def exp_on_all_datasets(datasets, k_vals = [3], d_vals = [3], ld_vals = [10]):
+def lex_succ(max_vals):
+    """
+    >>> lex_succ([1,1,2])
+    [[0, 0, 0], [0, 0, 1], [0, 0, 2], [0, 1, 0], [0, 1, 1], [0, 1, 2], [1, 0, 0], [1, 0, 1], [1, 0, 2], [1, 1, 0], [1, 1, 1], [1, 1, 2]]
+    """
+    current_val = [0]*len(max_vals)
+    lex_succs = [current_val[:]]
+    while current_val != max_vals:
+        current_val = next_lex(max_vals, current_val)
+        lex_succs.append(current_val[:])
+    return lex_succs
+
+def parameter_sweep(model_parameters):
+    """
+    >>> parameter_sweep([[1,2,3], ["a", "b", "c"]])
+    [[1, 'a'], [1, 'b'], [1, 'c'], [2, 'a'], [2, 'b'], [2, 'c'], [3, 'a'], [3, 'b'], [3, 'c']]
+
+    >>> k_vals = [1, 3, 10]
+    >>> d_vals = [1, 3, 5]
+    >>> ld_vals = [1, 10, 100]
+    >>> model_parameters = [k_vals, d_vals, ld_vals]
+    >>> parameter_sweep(model_parameters)
+    [[1, 1, 1], [1, 1, 10], [1, 1, 100], [1, 3, 1], [1, 3, 10], [1, 3, 100], [1, 5, 1], [1, 5, 10], [1, 5, 100], [3, 1, 1], [3, 1, 10], [3, 1, 100], [3, 3, 1], [3, 3, 10], [3, 3, 100], [3, 5, 1], [3, 5, 10], [3, 5, 100], [10, 1, 1], [10, 1, 10], [10, 1, 100], [10, 3, 1], [10, 3, 10], [10, 3, 100], [10, 5, 1], [10, 5, 10], [10, 5, 100]]
+    """
+    max_vals = [len(model_parameters[i])-1 for i in range(len(model_parameters))]
+    parameter_combinations =  lex_succ(max_vals)
+    sweep_options = [[model_parameters[i][parameter_combination[i]] for i in range(len(parameter_combination))] for parameter_combination in parameter_combinations]
+    return sweep_options
+
+def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clear_results = False, model_class = "xgboost", model_parameters = [[3], [3], [10]]):
+    """
+    >>> print("titanic test")
+    titanic test
+    >>> dataset_name = "titanic"
+    >>> target = "Survived"
+    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    >>> k_vals = [1, 3, 10]
+    >>> d_vals = [1, 3, 5]
+    >>> ld_vals = [1, 10, 100]
+    >>> model_parameters = [k_vals, d_vals, ld_vals]
+    >>> model_parameters = [[3], [3], [10]] # done for speed, usually remove
+    >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class="xgboost", model_parameters=model_parameters)
+
+
+    >>> print("titanic test")
+    titanic test
+    >>> dataset_name = "titanic"
+    >>> target = "Survived"
+    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    >>> k_vals = [1, 3, 10]
+    >>> d_vals = [1, 3, 5]
+    >>> ld_vals = [1, 10, 100]
+    >>> model_parameters = [k_vals, d_vals, ld_vals]
+    >>> model_parameters = [[3], [3], [10]] # done for speed, usually remove
+    >>> model_class = "xgboost"
+    >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters)
+
+    >>> print("titanic test")
+    titanic test
+    >>> dataset_name = "titanic"
+    >>> target = "Survived"
+    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    >>> k_vals = [1, 4]
+    >>> reg_vals = [10, 50]
+    >>> model_parameters = [k_vals, reg_vals]
+    >>> model_parameters = [[4], [50]] # done for speed, usually remove
+    >>> model_class = "rule_ensamble"
+    >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters)
+
+    >>> print("titanic test")
+    titanic test
+    >>> dataset_name = "titanic"
+    >>> target = "Survived"
+    >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    >>> k_vals = [1, 3]
+    >>> reg_vals = [10, 50]
+    >>> model_parameters = [k_vals, reg_vals]
+    >>> model_class = "other"
+    >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters)
+
+    """
+    if clear_results:
+        res_df = pd.DataFrame(
+            columns=['dataset', 'target', 'no_feat', 'no_rows', 'tr_RMSE', 'te_RMSE', 'model_class', 'model_complexity',
+                     'k', 'd', 'l']) # fix
+    else:
+        res_df = pd.read_pickle("results/results.pkl")  # open old results
+
+    data, target_name, n = prep(dataset, target, without)
+    [train, train_target, test, test_target] = data
+    (n_test, n_train) = n
+
+    sweep_options = parameter_sweep(model_parameters)
+
+    for sweep_option in sweep_options:
+        if model_class == "xgboost":
+            model, train_RMSE, test_RMSE = generate_xgb_model(data, *sweep_option, model_type="Regressor")
+            rmse = test_RMSE
+            model_complexity = count_nodes(model)
+        elif model_class == "rule_ensamble":
+            ensamble_complexity = lambda reg, k: k  # a placeholder function for model complexity
+
+            rules = AdditiveRuleEnsemble(*sweep_option)
+            rules.fit(train, train_target)
+            rmse = rules_rmse(rules, test, test_target, n_test)
+            model_complexity = ensamble_complexity(*sweep_option)
+        else:
+            return ValueError
+
+        exp_res = {"dataset": dataset, "target": target, "no_feat": len(train.columns),
+                       "no_rows": n_train+n_test, "rmse": rmse, 'model_class': model_class,
+                        "model_complexity": model_complexity, "model_parameters": sweep_option}
+
+        res_df = res_df.append(exp_res, ignore_index=True)
+
+        res_df.to_pickle("./results.pkl", protocol=4)  # save current results table
+
+        testing = False
+        if testing == True:
+            read_results()
+
+        return exp_res
+
+
+def exp_on_all_datasets(datasets, test_size=0.2, model_class="xgboost", model_parameters=[[3], [3], [10]]):
     first = True
     for fn in datasets:
         print(fn)
         target, without = dataset_signature(fn)
-        exp(fn, target, without, path="", model_class="xgboost", clear_results=first, k_vals=k_vals, d_vals=d_vals, ld_vals=ld_vals)
+        unified_experiment(fn, target, without, test_size=test_size, clear_results=first, model_class=model_class, model_parameters=model_parameters)
         first = False
 
-def exp_on_all_datasets_rules(datasets, k_vals = [3], d_vals = [3], ld_vals = [10]):
-    first = True
-    for fn in datasets:
-        print(fn)
-        target, without = dataset_signature(fn)
-        xgb_res = exp(fn, target, without, path="", model_class="xgboost", clear_results=first, k_vals=k_vals, d_vals=d_vals, ld_vals=ld_vals)
-        rules_res = rules_exp(fn, target, without)
-        first = False
 
 """
 def get_timestamp():
