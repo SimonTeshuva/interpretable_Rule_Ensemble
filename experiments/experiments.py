@@ -127,7 +127,7 @@ def read_results():
     pd.set_option('display.max_columns', 10)
     with pd.option_context('display.max_rows', None, 'display.max_columns', None):
         print(res_df)
-    res_df.to_pickle("./results.pkl") #save current results table
+    res_df.to_pickle("results/results.pkl") #save current results table
 
 
 def dataset_signature(dataset_name):
@@ -217,8 +217,6 @@ def parameter_sweep(model_parameters):
 def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clear_results = False, model_class = "xgboost", model_parameters = [[3], [3], [10]]):
     """
     >>> print("titanic test")
-    titanic test
-    >>> dataset_name = "titanic"
     >>> target = "Survived"
     >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
     >>> k_vals = [1, 3, 10]
@@ -228,9 +226,6 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
     >>> model_parameters = [[3], [3], [10]] # done for speed, usually remove
     >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class="xgboost", model_parameters=model_parameters)
 
-
-    >>> print("titanic test")
-    titanic test
     >>> dataset_name = "titanic"
     >>> target = "Survived"
     >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
@@ -242,8 +237,6 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
     >>> model_class = "xgboost"
     >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters)
 
-    >>> print("titanic test")
-    titanic test
     >>> dataset_name = "titanic"
     >>> target = "Survived"
     >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
@@ -254,8 +247,6 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
     >>> model_class = "rule_ensamble"
     >>> exp_res = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters)
 
-    >>> print("titanic test")
-    titanic test
     >>> dataset_name = "titanic"
     >>> target = "Survived"
     >>> without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
@@ -267,9 +258,7 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
 
     """
     if clear_results:
-        res_df = pd.DataFrame(
-            columns=['dataset', 'target', 'no_feat', 'no_rows', 'tr_RMSE', 'te_RMSE', 'model_class', 'model_complexity',
-                     'k', 'd', 'l']) # fix
+        res_df = pd.DataFrame(columns=["dataset", "target", "no_feat", "no_rows", "rmse", 'model_class', "model_complexity", "model_parameters"])
     else:
         res_df = pd.read_pickle("results/results.pkl")  # open old results
 
@@ -279,7 +268,10 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
 
     sweep_options = parameter_sweep(model_parameters)
 
+
     for sweep_option in sweep_options:
+        # print(dataset_name, target, model_class, sweep_option)
+
         if model_class == "xgboost":
             model, train_RMSE, test_RMSE = generate_xgb_model(data, *sweep_option, model_type="Regressor")
             rmse = test_RMSE
@@ -297,16 +289,17 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
         exp_res = {"dataset": dataset, "target": target, "no_feat": len(train.columns),
                        "no_rows": n_train+n_test, "rmse": rmse, 'model_class': model_class,
                         "model_complexity": model_complexity, "model_parameters": sweep_option}
+        print(exp_res)
 
         res_df = res_df.append(exp_res, ignore_index=True)
 
-        res_df.to_pickle("./results.pkl", protocol=4)  # save current results table
+        res_df.to_pickle("results/results.pkl", protocol=4)  # save current results table
 
-        testing = False
-        if testing == True:
-            read_results()
+    testing = False
+    if testing == True:
+        read_results()
 
-        return exp_res
+    return res_df
 
 
 def exp_on_all_datasets(datasets, test_size=0.2, model_class="xgboost", model_parameters=[[3], [3], [10]]):
@@ -372,11 +365,26 @@ if __name__ == "__main__":
     # "gdp_vs_satisfaction": raise XGBoostError(py_str(_LIB.XGBGetLastError()))
     # xgboost.core.XGBoostError: [16:34:12] D:\Build\xgboost\xgboost-0.90.git\src\metric\rank_metric.cc:200: Check failed: !auc_error: AUC: the dataset only contains pos or neg samples
 
-    debugging_datasets = ["advertising", "titanic"]
+
+    # advertising is a good second dataset
+
+    dataset_name = "titanic"
+    target = "Survived"
+    without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+
+    model_class = "xgboost"
     k_vals = [1, 3, 10]
     d_vals = [1, 3, 5]
     ld_vals = [1, 10, 100]
-#    exp_on_all_datasets(small_datasets)
-    exp_on_all_datasets(small_datasets, k_vals, d_vals, ld_vals)
+    model_parameters = [k_vals, d_vals, ld_vals]
+    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, clear_results=True,
+                                      model_class=model_class, model_parameters=model_parameters)
+    k_vals = [1, 4]
+    reg_vals = [10, 50]
+    model_parameters = [k_vals, reg_vals]
+    model_class = "rule_ensamble"
+    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
+                                      model_class=model_class, model_parameters=model_parameters)
+
     read_results()
 
