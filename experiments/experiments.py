@@ -278,7 +278,6 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
             model_complexity = count_nodes(model)
         elif model_class == "rule_ensamble":
             ensamble_complexity = lambda reg, k: k  # a placeholder function for model complexity
-
             rules = AdditiveRuleEnsemble(*sweep_option)
             rules.fit(train, train_target)
             rmse = rules_rmse(rules, test, test_target, n_test)
@@ -302,14 +301,28 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
     return res_df
 
 
-def exp_on_all_datasets(datasets, test_size=0.2, model_class="xgboost", model_parameters=[[3], [3], [10]]):
+def exp_on_all_datasets(datasets, test_size=0.2, model_info = ["xgboost", [[3], [3]], 10]):
+    """
+    >>> datasets = ["titanic", "gdp_vs_satisfaction"]
+    >>> k_vals = [1, 3, 10]
+    >>> d_vals = [1, 3, 5]
+    >>> ld_vals = [1, 10, 100]
+    >>> xgb_model_parameters = [k_vals, d_vals, ld_vals]
+    >>> k_vals = [1, 4]
+    >>> reg_vals = [10, 50]
+    >>> rule_ensamble_model_parameters = [k_vals, reg_vals]
+    >>> model_info = [["xgboost", xgb_model_parameters], ["rule_ensamble", rule_ensamble_model_parameters]]
+    >>> exp_on_all_datasets(datasets, test_size=0.2, model_info=model_info)
+    """
     first = True
     for fn in datasets:
-        print(fn)
-        target, without = dataset_signature(fn)
-        unified_experiment(fn, target, without, test_size=test_size, clear_results=first, model_class=model_class, model_parameters=model_parameters)
-        first = False
-
+        for model in model_info:
+            model_class = model[0]
+            model_parameters = model[1]
+            print(fn, model_class, model_parameters)
+            target, without = dataset_signature(fn)
+            unified_experiment(fn, target, without, test_size=test_size, clear_results=first, model_class=model_class, model_parameters=model_parameters)
+            first = False
 
 """
 def get_timestamp():
@@ -368,6 +381,7 @@ if __name__ == "__main__":
 
     # advertising is a good second dataset
 
+    """
     dataset_name = "titanic"
     target = "Survived"
     without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
@@ -385,6 +399,39 @@ if __name__ == "__main__":
     model_class = "rule_ensamble"
     res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
                                       model_class=model_class, model_parameters=model_parameters)
+    
+
+    dataset_name = "gdp_vs_satisfaction"
+    target = "Satisfaction"
+    without = ["Country"]
+
+    model_class = "xgboost"
+    k_vals = [1, 3, 10]
+    d_vals = [1, 3, 5]
+    ld_vals = [1, 10, 100]
+    model_parameters = [k_vals, d_vals, ld_vals]
+    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
+                                      model_class=model_class, model_parameters=model_parameters)
+    k_vals = [1, 4, 10]
+    reg_vals = [10, 50, 200]
+    model_parameters = [k_vals, reg_vals]
+    model_class = "rule_ensamble"
+    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
+                                      model_class=model_class, model_parameters=model_parameters)
+
 
     read_results()
+    
+    """
+
+    datasets = ["titanic", "gdp_vs_satisfaction"]
+    k_vals = [1, 3, 10]
+    d_vals = [1, 3, 5]
+    ld_vals = [1, 10, 100]
+    xgb_model_parameters = [k_vals, d_vals, ld_vals]
+    k_vals = [1, 4]
+    reg_vals = [10, 50]
+    rule_ensamble_model_parameters = [k_vals, reg_vals]
+    model_info = [["xgboost", xgb_model_parameters], ["rule_ensamble", rule_ensamble_model_parameters]]
+    exp_on_all_datasets(datasets, test_size=0.2, model_info=model_info)
 
