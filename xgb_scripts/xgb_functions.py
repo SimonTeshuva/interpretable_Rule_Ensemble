@@ -2,7 +2,7 @@ import numpy as np
 import xgboost as xgb
 from sklearn.metrics import mean_squared_error
 
-def generate_xgb_model(data, k, d, ld, model_type="Regressor"):
+def generate_xgb_model(data, k, d, ld, model_type="Regressor", norm_mean = False):
     """
     >>> fn1 = "titanic"
     >>> target = "Survived"
@@ -23,8 +23,10 @@ def generate_xgb_model(data, k, d, ld, model_type="Regressor"):
     :param model_type:
     :return:
     """
-
-    [X_train, Y_train, X_test, Y_test] = data
+    if norm_mean:
+        [X_train, [Y_train, Y_train_mean], X_test, [Y_test, Y_test_mean]] = data
+    else:
+        [X_train, Y_train, X_test, Y_test] = data
 
     if model_type == "Classifier":
         model = xgb.XGBClassifier(max_depth=d, n_estimators=k, verbosity=0, objective='binary:logistic', reg_lambda=ld)
@@ -39,11 +41,23 @@ def generate_xgb_model(data, k, d, ld, model_type="Regressor"):
   #  model = xgb.XGBRegressor(max_depth=d, n_estimators=k, verbosity=0, objective='reg:squarederror', reg_lambda=ld)
    # model.fit(X_train, Y_train, early_stopping_rounds=10, eval_set=[(X_test, Y_test)], verbose=False)
 
-    preds = model.predict(X_train)
-    train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
 
-    preds = model.predict(X_test)
-    test_rmse = np.sqrt(mean_squared_error(Y_test, preds))
+    if norm_mean:
+        preds = model.predict(X_train)
+#        preds += Y_train_mean
+#        Y_train += Y_train_mean
+        train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
+
+        preds = model.predict(X_test)
+#        preds += Y_test_mean
+#        Y_test += Y_test_mean
+        test_rmse = np.sqrt(mean_squared_error(Y_test, preds))
+    else:
+        preds = model.predict(X_train)
+        train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
+        preds = model.predict(X_test)
+        test_rmse = np.sqrt(mean_squared_error(Y_test, preds))
+
 
     return model, train_rmse, test_rmse
 

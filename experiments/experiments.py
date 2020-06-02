@@ -5,12 +5,18 @@ import pandas as pd
 
 from sklearn.model_selection import train_test_split
 
-from orb.rules import AdditiveRuleEnsemble
+from orb.rules import AdditiveRuleEnsemble, save_exp_res, load_result
+import datetime
 
 from xgb_scripts.xgb_functions import generate_xgb_model
 from xgb_scripts.xgb_functions import count_nodes
+import xgboost as xgb
 
-def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_class = 'xgboost'):
+import graphviz
+
+from matplotlib import pyplot as plt
+
+def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_class = 'xgboost', mean_norm = False):
     # assumes all files have the same labels. ie: test/train pre split, or data from various years
     """
     take a dataset in a single file, splits X and Y, and splits the data into train and test compartments
@@ -109,17 +115,21 @@ def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_
 
     train, test, train_target, test_target = train_test_split(X, Y, test_size=test_size)
 
-    data = [train, train_target, test, test_target]
-
     n = (len(test), len(train))
 
+    if mean_norm: #scikitlearn transformer
+        target_train_mean = sum(train_target)/len(train_target)
+#        target_test_mean = sum(test_target)/len(test_target)
+
+        train_target -= target_train_mean
+        test_target -= target_train_mean
+
+        train_target = [train_target, target_train_mean]
+        test_target = [test_target, target_train_mean]
+
+    data = [train, train_target, test, test_target]
+
     return data, target, n
-
-def rules_rmse(rules, test, test_target, n_test):
-    rules_prediction = [rules(test.iloc[i]) for i in range(n_test)]
-    rmse = sum([(test_target.iloc[i] - rules_prediction[i])**2 for i in range(n_test)])**0.5
-    return rmse
-
 
 def read_results():
     res_df = pd.read_pickle("results/results.pkl") #open old results
@@ -148,7 +158,7 @@ def dataset_signature(dataset_name):
             "used_cars": ("avgPrice", [], []),
             "wages_demographics": ("earn", [], []),
             "who_life_expectancy": ("Life expectancy ", [], []),
-            "world_happiness_indicator": ("Happiness Score", ["Country", "Happiness Rank", "Standard Error"], []),
+            "world_happiness_indicator": ("Happiness Score", ["Country", "Happiness Rank"], []),
             }
     dataset_info = data[dataset_name]
     target = dataset_info[0]
@@ -214,7 +224,70 @@ def parameter_sweep(model_parameters):
     sweep_options = [[model_parameters[i][parameter_combination[i]] for i in range(len(parameter_combination))] for parameter_combination in parameter_combinations]
     return sweep_options
 
-def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clear_results = False, model_class = "xgboost", model_parameters = [[3], [3], [10]]):
+
+def exp_on_all_datasets(datasets, test_size=0.2, model_info = ["xgboost", [[3], [3]], 10]):
+    """
+    >>> datasets = ["titanic", "gdp_vs_satisfaction"]
+    >>> k_vals = [1, 3, 10]
+    >>> d_vals = [1, 3, 5]
+    >>> ld_vals = [1, 10, 100]
+    >>> xgb_model_parameters = [k_vals, d_vals, ld_vals]
+    >>> k_vals = [1, 4]
+    >>> reg_vals = [10, 50]
+    >>> rule_ensamble_model_parameters = [k_vals, reg_vals]
+    >>> model_info = [["xgboost", xgb_model_parameters], ["rule_ensamble", rule_ensamble_model_parameters]]
+    >>> exp_on_all_datasets(datasets, test_size=0.2, model_info=model_info)
+    """
+    first = True
+    for fn in datasets:
+        for model in model_info:
+            model_class = model[0]
+            model_parameters = model[1]
+            print(fn, model_class, model_parameters)
+            target, without = dataset_signature(fn)
+            unified_experiment(fn, target, without, test_size=test_size, clear_results=first, model_class=model_class, model_parameters=model_parameters)
+            first = False
+
+
+def get_timestamp():
+    now = datetime.now()
+    timestamp = datetime.timestamp(now)
+    dt_object = str(datetime.fromtimestamp(timestamp))
+
+    dt_object = dt_object.replace(" ", "_")
+    dt_object= dt_object.replace(":", "_")
+    dt_object = dt_object.replace("-", "_")
+    return dt_object
+
+
+def generate_interpretability_curve(error, interpretability, x_name, y_name, title_name, dataset_name,
+                                    experiment_timestamp, param_name):
+    result_directory_curves = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp,
+                                           param_name, "plots")
+    try:
+        os.makedirs(result_directory_curves)
+    except FileExistsError:
+        pass
+    tree_dir = os.path.join(result_directory_curves, "interpretability_curve.pdf")
+
+    plt.figure(0)
+
+    plt.plot(interpretability, error)
+    plt.xlabel(x_name)
+    plt.ylabel(y_name)
+    plt.title(title_name)
+
+    plt.savefig(tree_dir, dpi=300, facecolor='w', edgecolor='w',
+                orientation='portrait', papertype=None, format=None,
+                transparent=False, bbox_inches=None, pad_inches=0.1,
+                frameon=None, metadata=None)
+
+    print("\n\n\n\n curve plotted and saved \n\n\n\n\n")
+    for i in range(len(error)):
+        print(error[i], interpretability[i])
+
+
+def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clear_results = False, model_class = "xgboost", model_parameters = [[3], [3], [10]], downsample_size = None, norm_mean = False):
     """
     >>> print("titanic test")
     >>> target = "Survived"
@@ -258,36 +331,53 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
 
     """
     if clear_results:
-        res_df = pd.DataFrame(columns=["dataset", "target", "no_feat", "no_rows", "rmse", 'model_class', "model_complexity", "model_parameters"])
+        res_df = pd.DataFrame(columns=["dataset", "target", "no_feat", "no_rows", "train_rmse", "test_rmse", 'model_class', "model_complexity", "model_parameters"])
     else:
         res_df = pd.read_pickle("results/results.pkl")  # open old results
 
-    data, target_name, n = prep_data(dataset, target, without)
-    [train, train_target, test, test_target] = data
+    data, target_name, n = prep_data(dataset, target, without, mean_norm=norm_mean)
+    if norm_mean:
+        [train, [train_target, train_target_mean], test, [test_target, test_target_mean]] = data
+    else:
+        [train, train_target, test, test_target] = data
     (n_test, n_train) = n
+
+    if downsample_size != None: # for speed. usually remove
+        train=train[:downsample_size]
+        test=test[:downsample_size]
+        train_target=train_target[:downsample_size]
+        test_target=test_target[:downsample_size]
+        n_train=downsample_size
+        n_test=downsample_size
+
 
     sweep_options = parameter_sweep(model_parameters)
 
-
+    max_complexity_model = None
+    max_complexity = 0
+    num_trees = 0
     for sweep_option in sweep_options:
         # print(dataset_name, target, model_class, sweep_option)
 
         if model_class == "xgboost":
-            model, train_RMSE, test_RMSE = generate_xgb_model(data, *sweep_option, model_type="Regressor")
-            rmse = test_RMSE
+            model, train_RMSE, test_RMSE = generate_xgb_model(data, *sweep_option, model_type="Regressor", norm_mean=norm_mean)
             model_complexity = count_nodes(model)
+            if model_complexity>max_complexity:
+                max_complexity_model = model
+                max_complexity = model_complexity
+                num_trees = sweep_option[0]
         elif model_class == "rule_ensamble":
             ensamble_complexity = lambda reg, k: k  # a placeholder function for model complexity
             rules = AdditiveRuleEnsemble(*sweep_option)
             rules.fit(train, train_target)
-            rmse = rules_rmse(rules, test, test_target, n_test)
+            # rmse = rules_rmse(rules, test, test_target, n_test)
             model_complexity = ensamble_complexity(*sweep_option)
         else:
             return ValueError
 
         exp_res = {"dataset": dataset, "target": target, "no_feat": len(train.columns),
-                       "no_rows": n_train+n_test, "rmse": rmse, 'model_class': model_class,
-                        "model_complexity": model_complexity, "model_parameters": sweep_option}
+                       "no_rows": n_train+n_test, "train_rmse": train_RMSE, "test_rmse": test_RMSE,
+                        'model_class': model_class, "model_complexity": model_complexity, "model_parameters": sweep_option}
         print(exp_res)
 
         res_df = res_df.append(exp_res, ignore_index=True)
@@ -298,140 +388,276 @@ def unified_experiment(dataset, target=None, without = [], test_size = 0.2, clea
     if testing == True:
         read_results()
 
-    return res_df
+    return res_df, max_complexity_model, num_trees
 
 
-def exp_on_all_datasets(datasets, test_size=0.2, model_info = ["xgboost", [[3], [3]], 10]):
-    """
-    >>> datasets = ["titanic", "gdp_vs_satisfaction"]
-    >>> k_vals = [1, 3, 10]
-    >>> d_vals = [1, 3, 5]
-    >>> ld_vals = [1, 10, 100]
-    >>> xgb_model_parameters = [k_vals, d_vals, ld_vals]
-    >>> k_vals = [1, 4]
-    >>> reg_vals = [10, 50]
-    >>> rule_ensamble_model_parameters = [k_vals, reg_vals]
-    >>> model_info = [["xgboost", xgb_model_parameters], ["rule_ensamble", rule_ensamble_model_parameters]]
-    >>> exp_on_all_datasets(datasets, test_size=0.2, model_info=model_info)
-    """
-    first = True
-    for fn in datasets:
-        for model in model_info:
-            model_class = model[0]
-            model_parameters = model[1]
-            print(fn, model_class, model_parameters)
-            target, without = dataset_signature(fn)
-            unified_experiment(fn, target, without, test_size=test_size, clear_results=first, model_class=model_class, model_parameters=model_parameters)
-            first = False
+def exp(dataset_name = "avocado_prices", target_name = "AveragePrice", feature_names_to_drop = ["Date", "group"], model_class = 'rule_ensamble', model_parameters = (3, 50), alpha_function = lambda k: 1):
+    data, target_name, n = prep_data(dataset_name=dataset_name, target=target_name, without=feature_names_to_drop, test_size=0.2, model_class=model_class)
 
-"""
-def get_timestamp():
-    now = datetime.now()
-    timestamp = datetime.timestamp(now)
-    dt_object = str(datetime.fromtimestamp(timestamp))
+    [train, train_target, test, test_target] = data
+    (n_test, n_train) = n
 
-    dt_object = dt_object.replace(" ", "_")
-    dt_object= dt_object.replace(":", "_")
-    dt_object = dt_object.replace("-", "_")
-    return dt_object
+    downsample_size = 500
+    train = train[:downsample_size]
+    train_target = train_target[:downsample_size]
+    test = test[:downsample_size]
+    test_target = test_target[:downsample_size]
+    n_train = downsample_size
+    n_test = downsample_size
 
 
-def generate_interpretability_curve(error, interpretability, x_name, y_name, title_name, dataset_name,
-                                    experiment_timestamp, param_name):
-    result_directory_curves = os.path.join(os.getcwd(), "Experiments", "results", dataset_name, experiment_timestamp,
-                                           param_name, "plots")
-    try:
-        os.makedirs(result_directory_curves)
-    except FileExistsError:
-        pass
-    tree_dir = os.path.join(result_directory_curves, "interpretability_curve.pdf")
 
-    plt.figure(0)
+    if model_class == "rule_ensamble":
+        print('creating rule ensamble')
+        rules = AdditiveRuleEnsemble(k=model_parameters[0], reg=model_parameters[1], alpha_function=alpha_function)
+        rules.reset()
+        print('ftting rule ensamble')
 
-    plt.plot(interpretability, error)
-    plt.xlabel(x_name)
-    plt.ylabel(y_name)
-    plt.title(title_name)
+        train_scores = []
+        test_scores = []
+        model_complexities = []
+        for i in range(rules.k):
+            print('adding rule: ', len(rules.members)+1)
+            rules.add_rule(data=train, labels=train_target)
+            model_complexities.append(rules.model_complexity())
+            train_scores.append(rules.score(data=train, labels = train_target, n=downsample_size))
+            test_scores.append(rules.score(data=test, labels = test_target, n=downsample_size))
 
-    plt.savefig(tree_dir, dpi=300, facecolor='w', edgecolor='w',
-                orientation='portrait', papertype=None, format=None,
-                transparent=False, bbox_inches=None, pad_inches=0.1,
-                frameon=None, metadata=None)
+        print('printing rule ensamble')
+        for rule in rules.members:
+            print(rule)
 
-    print("\n\n\n\n curve plotted and saved \n\n\n\n\n")
-    for i in range(len(error)):
-        print(error[i], interpretability[i])
+    elif model_class == "xgboost":
+        print(1)
 
-"""
+    data = [train, train_target, test, test_target]
+
+    dataset_size = downsample_size
+    results = [dataset_name, target_name, rules, train_scores, test_scores, model_complexities, feature_names_to_drop, dataset_size]
+    return results, data # change to yeild for each rule, add alpha parameter
+
+def unified_experiment2(dataset_name="avocado_prices", target_name="AveragePrice", feature_names_to_drop=["Date", "group"], ensamble_parameters=[[2], [50], [lambda k: 1]], forest_parameters = [[1,2,3], [1,2,3], [50]], clear_results=True, downsample_size=None):
+    rule_ensamble = "rule_ensamble"
+    random_forest = "xgboost"
+
+    if clear_results:
+        res_df = pd.DataFrame(columns=["dataset", "target", "no_feat", "no_rows", "train_rmse", "test_rmse", 'model_class', "model_complexity", "model_parameters"])
+    else:
+        res_df = pd.read_pickle("results/results.pkl")  # open old results
+
+    data, target_name, n = prep_data(dataset_name, target=target_name, without=feature_names_to_drop, test_size=0.2, model_class="rule_ensamble")
+
+    [train, train_target, test, test_target] = data
+    (n_test, n_train) = n
+
+    if downsample_size != None:
+        train = train[:downsample_size]
+        train_target = train_target[:downsample_size]
+        test = test[:downsample_size]
+        test_target = test_target[:downsample_size]
+        n_train = downsample_size
+        n_test = downsample_size
+
+    ensamble_options = parameter_sweep(ensamble_parameters)
+    forest_options = parameter_sweep(forest_parameters)
+
+    all_options = []
+    for option in ensamble_options:
+        option.append(rule_ensamble)
+        all_options.append(option)
+    for option in forest_options:
+        option.append(random_forest)
+        all_options.append(option)
+
+    for option in all_options:
+        if option[-1]==rule_ensamble:
+            k, reg, alpha_function, model_class = option
+            rules = AdditiveRuleEnsemble(k=k, reg=reg, alpha_function=alpha_function)
+            rules.reset()
+            print('ftting rule ensamble')
+            for i in range(rules.k):
+                print('adding rule: ', len(rules.members) + 1)
+                rules.add_rule(data=train, labels=train_target)
+                model_complexity, train_RMSE, test_RMSE = rules.model_complexity(), rules.score(data=train, labels=train_target, n=downsample_size), rules.score(data=test, labels=test_target, n=downsample_size)
+                exp_res = {"dataset": dataset_name, "target": target_name, "no_feat": len(train.columns),
+                           "no_rows": n_train + n_test, "train_rmse": train_RMSE, "test_rmse": test_RMSE,
+                           'model_class': model_class, "model_complexity": model_complexity, "model_parameters": option}
+                print(exp_res)
+                res_df = res_df.append(exp_res, ignore_index=True)
+        elif option[-1]==random_forest:
+            k, depth, reg, model_class = option
+            model, train_RMSE, test_RMSE = generate_xgb_model(data, *option[:-1], model_type="Regressor", norm_mean=False)
+            model_complexity = count_nodes(model)
+            exp_res = {"dataset": dataset_name, "target": target_name, "no_feat": len(train.columns),
+                       "no_rows": n_train + n_test, "train_rmse": train_RMSE, "test_rmse": test_RMSE,
+                       'model_class': model_class, "model_complexity": model_complexity, "model_parameters": option}
+            print(exp_res)
+            res_df = res_df.append(exp_res, ignore_index=True)
+        else:
+            continue
+
+
+
+#        res_df.to_pickle("results/results.pkl", protocol=4)  # save current results table
+
+    testing = False
+    if testing == True:
+        read_results()
+
 if __name__ == "__main__":
-    # split target into ranges.
-    datasets = ["advertising", "avocado_prices", "cdc_physical_activity_obesity", "gdp_vs_satisfaction",
-                 "halloween_candy_ranking","metacritic_games", "random_regression", "red_wine_quality",
-                 "suicide_rates", "titanic", "us_minimum_wage_by_state", "used_cars","wages_demographics",
-                 "who_life_expectancy", "world_happiness_indicator"]
 
-    small_datasets = ["advertising", "halloween_candy_ranking", "random_regression", "red_wine_quality",
-                      "titanic", "used_cars", "wages_demographics"] # small
+    # unified_experiment2()
 
-    # "us_minimum_wage_by_state" causing problems. suspect its the columns with ... and (b) entries in them
+    model_class = "ensamble"
+    repeats = 3
 
-    # "gdp_vs_satisfaction": raise XGBoostError(py_str(_LIB.XGBGetLastError()))
-    # xgboost.core.XGBoostError: [16:34:12] D:\Build\xgboost\xgboost-0.90.git\src\metric\rank_metric.cc:200: Check failed: !auc_error: AUC: the dataset only contains pos or neg samples
+    dataset_name = "avocado_prices"
+    target = "AveragePrice"
+    without = ["Date", "group"]
+    '''
+    dataset_name ="halloween_candy_ranking"
+    target = "winpercent"
+    without = ['competitorname']
+
+    dataset_name = "red_wine_quality"
+    target = "quality"
+    without = []
+    '''
+
+    # ensemble vs forest (1, 3, ...) max depth/#rules
+
+    # opt est doesnt eem to update
+    # scikitlearn with 1 tree as a comparision as well
+    # look into documentation to see if data is being normalised/centralisation about 0 for all numerical features
+
+    if model_class == "ensamble":
+        max_k = 2
+        reg = 50
+        alpha_function = lambda k: max(min(1 - k ** 2 / reg, 1), 0)  # when alpha <0.5 code continues with alpha = 0.5 instead of stopping. investigate. Rules made with "Unamed" add to drop # change this to fixed time budget, or just a constant
+        alpha_function = lambda k: 0.8
+        train_score_av = [0]*max_k
+        test_score_av = [0]*max_k
+        model_complexities_av = [0]*max_k
+        for i in range(repeats):
+            res, data = exp(dataset_name=dataset_name, target_name=target, feature_names_to_drop=without, model_parameters=(max_k, reg), alpha_function=alpha_function)
+            dataset_name, target_name, rules, train_scores, test_scores, model_complexities, feature_names_to_drop, dataset_size = res
+            [train, train_target, test, test_target] = data
+            train_score_av = [train_score_av[j] + train_scores[j]/repeats for j in range(len(train_score_av))]
+            test_score_av = [test_score_av[j] + test_scores[j]/repeats for j in range(len(test_score_av))]
+            model_complexities_av = [model_complexities_av[j] + model_complexities[j]/repeats for j in range(len(model_complexities_av))]
+
+        save_exp_res(res)
+#        ARE, train_scores_old, test_scores_old, model_complexities_old = load_result("avocado_prices", "2020-05-27 15:01:22.111692")
+        plt.plot(model_complexities_av, train_score_av, label="train")
+        plt.plot(model_complexities_av, test_score_av, label="test")
+        plt.xlabel('ensamble complexity')
+        plt.ylabel('error')
+        plt.legend()
+        plt.title("avocado prices")
+        plt.show()
+    elif model_class=="xgboost":
+        k_vals = [1, 2, 3]
+        d_vals = [1, 2, 3]
+        max_depth = 5
+        max_comp = 60
+
+        k_vals = range(1,6)
+        sweep_options = [(k, [i for i in range(1, max_depth) if k*2**i < max_comp]) for k in k_vals]
+
+        ld_vals = [10]
+        model_parameters = [k_vals, d_vals, ld_vals]
+        norm_mean = True
+        for option in sweep_options:
+            k, d, ld = option[0], option[1], ld_vals
+            model_parameters = [[k], d, ld]
+            for i in range(repeats):
+                exp_res, max_model, num_trees = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, model_class=model_class, model_parameters=model_parameters, downsample_size=500, clear_results=True, norm_mean = norm_mean)
+
+                if i == 0:
+                    train_RMSEs = exp_res['train_rmse']
+                    test_RMSEs = exp_res['test_rmse']
+                    model_complexities  = exp_res["model_complexity"]
+                else:
+                    train_RMSEs = [train_RMSEs[i] + exp_res['train_rmse'][i] for i in range(len(train_RMSEs))]
+                    test_RMSEs = [test_RMSEs[i] + exp_res['test_rmse'][i] for i in range(len(test_RMSEs))]
+                    model_complexities = [model_complexities[i] + exp_res['model_complexity'][i] for i in range(len(model_complexities))]
+
+            train_RMSEs = [train_RMSEs[i]/repeats for i in range(len(train_RMSEs))]
+            test_RMSEs = [test_RMSEs[i]/repeats for i in range(len(test_RMSEs))]
+            model_complexities = [model_complexities[i]/repeats for i in range(len(model_complexities))]
+
+            train_data = [(model_complexities[i], train_RMSEs[i]) for i in range(len(model_complexities))]
+            train_data.sort(key=lambda x: x[1])
+            train_data.sort(key = lambda x: x[0])
+            train_data_cleaned = [train_data[i] for i in range(len(train_data)) if i==0 or (train_data[i][0] != train_data[i-1][0])]
+
+            test_data = [(model_complexities[i], test_RMSEs[i]) for i in range(len(model_complexities))]
+            test_data.sort(key = lambda x: x[1])
+            test_data.sort(key = lambda x: x[0])
+            test_data_cleaned = [test_data[i] for i in range(len(test_data)) if i==0 or (test_data[i][0] != test_data[i-1][0])]
+
+            print(train_data_cleaned)
+            print(test_data_cleaned)
+            plt.plot(*zip(*train_data_cleaned), label="train")
+            plt.plot(*zip(*test_data_cleaned), label="test")
+            plt.xlabel('forest complexity')
+            plt.ylabel('error')
+            plt.legend()
+            plt.title("avocado prices")
+            plt.show()
 
 
-    # advertising is a good second dataset
+        for i in range(num_trees):
+            tree = xgb.plot_tree(max_model, num_trees=i)
+            plt.show()
 
-    """
-    dataset_name = "titanic"
-    target = "Survived"
-    without = ['PassengerId', 'Name', 'Ticket', 'Cabin']
+    ARE, train_scores, test_scores, model_complexities = load_result("avocado_prices", "2020-05-30 22:25:07.727598")
+    for rule in ARE.members:
+        print(rule)
 
-    model_class = "xgboost"
-    k_vals = [1, 3, 10]
-    d_vals = [1, 3, 5]
-    ld_vals = [1, 10, 100]
-    model_parameters = [k_vals, d_vals, ld_vals]
-    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2, clear_results=True,
-                                      model_class=model_class, model_parameters=model_parameters)
-    k_vals = [1, 4]
-    reg_vals = [10, 50]
-    model_parameters = [k_vals, reg_vals]
-    model_class = "rule_ensamble"
-    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
-                                      model_class=model_class, model_parameters=model_parameters)
+    '''
+
+    ARE, train_scores, test_scores, model_complexities = load_result("avocado_prices", "2020-05-26 21:51:41.971961) # I am not reconstructing the default rule correctly
+
+    print('before extra rule')
+    for rule in ARE.members:
+        print(rule)
+
+    ARE.add_rule(data=train, labels=train_target)
+
+    print('after extra rule')
+    for rule in ARE.members:
+        print(rule)
+    '''
+
+    '''
+    #    alpha_function = lambda k: 1
+    alphas = []
+    for k in range(1, max_k):
+        res = exp(model_parameters=(k, reg), alpha_function=alpha_function)
+        dataset_name = res[0]
+        target_name = res[1]
+        rules.append(res.members[2][-1])
+        alphas.append(res.alphas[3][-1])
+        rmse_train.append(res[4])
+        rmse_test.append(res[5])
+
+    from collections import deque
+
+    ensamble_complexity = deque([0])
+    for rule in rules:
+        rule_complexity = len(str(rule.__repr__()).split('&'))
+        ensamble_complexity.append(ensamble_complexity[-1] + rule_complexity)
+    ensamble_complexity.popleft()
+    ensamble_complexity = [complexity - 1 for complexity in ensamble_complexity]
+    plt.plot(ensamble_complexity, rmse_train)
+    plt.xlabel('ensamble_size')
+    plt.ylabel('rmse')
+    plt.title('Ensamble Complexity vs RMSE for Avocado Prices')
+    print(dataset_name, target_name)
+    ar = ([(rules[i], alphas[i]) for i in range(len(rules))])
+    for rule in ar:
+        print(rule[1], rule[0])
+    plt.show()
     
-
-    dataset_name = "gdp_vs_satisfaction"
-    target = "Satisfaction"
-    without = ["Country"]
-
-    model_class = "xgboost"
-    k_vals = [1, 3, 10]
-    d_vals = [1, 3, 5]
-    ld_vals = [1, 10, 100]
-    model_parameters = [k_vals, d_vals, ld_vals]
-    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
-                                      model_class=model_class, model_parameters=model_parameters)
-    k_vals = [1, 4, 10]
-    reg_vals = [10, 50, 200]
-    model_parameters = [k_vals, reg_vals]
-    model_class = "rule_ensamble"
-    res_df = unified_experiment(dataset_name, target=target, without=without, test_size=0.2,
-                                      model_class=model_class, model_parameters=model_parameters)
-
-
-    read_results()
-    
-    """
-
-    datasets = ["titanic", "gdp_vs_satisfaction"]
-    k_vals = [1, 3, 10]
-    d_vals = [1, 3, 5]
-    ld_vals = [1, 10, 100]
-    xgb_model_parameters = [k_vals, d_vals, ld_vals]
-    k_vals = [1, 4]
-    reg_vals = [10, 50]
-    rule_ensamble_model_parameters = [k_vals, reg_vals]
-    model_info = [["xgboost", xgb_model_parameters], ["rule_ensamble", rule_ensamble_model_parameters]]
-    exp_on_all_datasets(datasets, test_size=0.2, model_info=model_info)
-
+    '''
