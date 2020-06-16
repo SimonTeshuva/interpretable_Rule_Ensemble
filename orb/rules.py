@@ -35,6 +35,7 @@ well with Pandas. For example:
 
 import pandas as pd
 import os
+from math import exp
 from ast import literal_eval
 
 #from realkd.search import Conjunction
@@ -78,7 +79,7 @@ class Rule:
     +0.7420 if Sex==female
     """
     # max_col attribute to change number of propositions
-    def __init__(self, q = lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10, alpha = 1):
+    def __init__(self, q=lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10, alpha = 1):
         self.q = q
         self.y = y
         self.z = z
@@ -100,8 +101,95 @@ class Rule:
         :return:
         """
         obj = SquaredLossObjective(data, target, reg=self.reg)
-        self.q = obj.search(max_col_attr=self.max_col_attr, alpha = self.alpha)
+        self.q = obj.search(max_col_attr=self.max_col_attr, alpha=self.alpha)
         self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
+
+
+def exp_loss(y, score):
+    return exp(-y*score)
+
+
+class ExponentialObjective:
+    """
+    >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
+    >>> female = KeyValueProposition('Sex', Constraint.equals('female'))
+    >>> obj = ExponentialObjective(titanic.drop(columns=['Survived']), titanic.Survived, pos_class=1)
+    >>> obj.opt_value(female)
+    0.4840764331210191
+    >>> obj(female)
+    0.04129047016520477
+    >>> q = obj.search()
+    >>> obj.opt_value(q)
+    >>> q
+    """
+
+    def __init__(self, data, target, pos_class=1.0, reg=0.0, scores=None):
+        """
+
+        :param data:
+        :param target:
+        :param reg:
+        :param scores: proper scoring function l(y, s) = l(-y, -s)
+        """
+        self.data = data
+        self.target = [1 if target[i] == pos_class else -1 for i in range(len(target))]
+        self.reg = reg
+        self.scores = scores or [0.0]*len(target)
+
+    def _gradient_summary(self, rows):
+        sum_g, sum_h = 0.0, 0.0
+        for i in rows:
+            loss = exp(-self.target[i] * self.scores[i])
+            sum_g += -self.target[i] * loss
+            sum_h += loss
+        return sum_g, sum_h
+
+    def _f(self, rows):
+        if len(rows) == 0:
+            return 0.0
+        sum_g, sum_h = self._gradient_summary(rows)
+        return sum_g ** 2 / (2 * len(self.data) * (self.reg + sum_h))
+
+    def _g(self, rows):
+        pos_rows = [i for i in rows if self.target[i] == 1]
+        neg_rows = [i for i in rows if self.target[i] == -1]
+        pos_val = self._f(pos_rows)
+        neg_val = self._f(neg_rows)
+        return max(pos_val, neg_val)
+
+    def __call__(self, q):
+        """
+
+        g_i = -y*exp(-y*score)
+        h_i = exp(-y*score)
+
+        :param q:
+        :return:
+        """
+        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+        return sum_g**2 / (2*len(self.data)*(self.reg + sum_h))
+
+    def opt_value(self, q):
+        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+        return -sum_g / (self.reg + sum_h)
+
+    def search(self, max_col_attr=10):
+        ctx = Context.from_df(self.data, max_col_attr=max_col_attr)
+        return ctx.search(self._f, self._g)
+        # # here we need the function in list of row indices; can we save some of these conversions?
+        # def f(rows):
+        #     c = len(rows)
+        #     if c == 0:
+        #         return 0.0
+        #     m = sum(self.target[i] for i in rows) / c
+        #     return self._f(c, m)
+        #
+        # g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
+        #
+
+        # return ctx.search(f, g)
+
+
 
 
 class AdditiveRuleEnsemble:
