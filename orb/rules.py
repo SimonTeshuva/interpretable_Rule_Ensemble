@@ -1,8 +1,12 @@
 """
 Provides basic classes and functions for representing rules and the
 propositions they are based on.
+
 Rules and propositions are callable Boolean functions that interact
 well with Pandas. For example:
+
+
+
 >>> import pandas as pd
 >>> data = {"country": ["Brazil", "Russia", "India", "China", "South Africa"],
 ...       "capital": ["Brasilia", "Moscow", "New Delhi", "Beijing", "Pretoria"],
@@ -11,12 +15,14 @@ well with Pandas. For example:
 >>> frame = pd.DataFrame(data)
 >>> frame.iloc[0, 0]
 'Brazil'
+
 >>> p1 = KeyValueProposition("country", Constraint.equals("Russia"))
 >>> str(p1)
 'country==Russia'
 >>> frame.loc[p1]
   country capital  area  population
 1  Russia  Moscow  17.1       143.5
+
 >>> p2 = KeyValueProposition('population', Constraint.less(210))
 >>> p3 = KeyValueProposition('area', Constraint.greater(10))
 >>> q = Conjunction([p2, p3])
@@ -29,25 +35,109 @@ well with Pandas. For example:
 
 import pandas as pd
 import os
-from math import exp
 from ast import literal_eval
+from math import exp
 
-#from realkd.search import Conjunction
-#from realkd.search import KeyValueProposition
-#from realkd.search import Constraint
-#from realkd.search import SquaredLossObjective
+# from realkd.search import Conjunction
+# from realkd.search import KeyValueProposition
+# from realkd.search import Constraint
+# from realkd.search import SquaredLossObjective
 
 from orb.search import Conjunction
 from orb.search import KeyValueProposition
 from orb.search import Constraint
-from orb.search import SquaredLossObjective
+# from orb.search import SquaredLossObjective
 from orb.search import Context
+from orb.search import DfWrapper, cov_mean_bound
+
+
+class SquaredLossObjective:
+    """
+    Rule boosting objective function for squared loss.
+
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> obj = SquaredLossObjective(titanic, titanic['Survived'])
+    >>> female = Conjunction([KeyValueProposition('Sex', Constraint.equals('female'))])
+    >>> first_class = Conjunction([KeyValueProposition('Pclass', Constraint.less_equals(1))])
+    >>> obj(female)
+    0.19404590848327577
+    >>> reg_obj = SquaredLossObjective(titanic.drop(columns=['Survived']), titanic['Survived'], reg=2)
+    >>> reg_obj(female)
+    0.19342988972618597
+    >>> reg_obj(first_class)
+    0.09566220318908493
+    >>> reg_obj._mean(female)
+    0.7420382165605095
+    >>> reg_obj._mean(first_class)
+    0.6296296296296297
+    >>> reg_obj.search()
+    Sex==female
+    """
+
+    def __init__(self, data, target, scores=None, reg=0):
+        """
+        :param data:
+        :param target: _series_ of residuals values of matching dimension
+        :param reg:
+        """
+        self.m = len(data)
+        self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        scores = scores or [0] * self.m
+        self.res = [target.iloc[i] - scores[i] for i in range(self.m)]
+        self.reg = reg
+
+    def _f(self, count, mean):
+        return self._reg_term(count) * count / self.m * pow(mean, 2)
+
+    def _reg_term(self, c):
+        return 1 / (1 + self.reg / (2 * c))
+
+    def _count(self, q):  # almost code duplication: Impact
+        return sum(1 for _ in filter(q, self.data))
+
+    def _mean(self, q):  # code duplication: Impact
+        s, c = 0.0, 0.0
+        for i in range(self.m):
+            if q(self.data[i]):
+                s += self.res[i]
+                c += 1
+        return s / c
+
+    #
+    def search(self, max_col_attr=10, alpha=1):
+        # here we need the function in list of row indices; can we save some of these conversions?
+        def f(rows):
+            c = len(rows)
+            if c == 0:
+                return 0.0
+            m = sum(self.res[i] for i in rows) / c
+            return self._f(c, m)
+
+        g = cov_mean_bound(self.res, lambda c, m: self._f(c, m))
+
+        ctx = Context.from_df(self.data.df, max_col_attr=max_col_attr)
+        return ctx.search(f, g, alpha)
+
+    def opt_value(self, rows):
+        s, c = 0.0, 0
+        for i in rows:
+            s += self.res[i]
+            c += 1
+
+        return s / (self.reg / 2 + c) if (c > 0 or self.reg > 0) else 0.0
+
+    def __call__(self, q):
+        c = self._count(q)
+        m = self._mean(q)
+        return self._f(c, m)
 
 
 class Rule:
     """
     Represents a rule of the form "r(x) = y if q(x) else z"
     for some binary query function q.
+
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> titanic[['Name', 'Sex', 'Survived']].iloc[0]
     Name        Braund, Mr. Owen Harris
@@ -59,6 +149,7 @@ class Rule:
     Sex                                                    female
     Survived                                                    1
     Name: 1, dtype: object
+
     >>> female = KeyValueProposition('Sex', Constraint.equals('female'))
     >>> r = Rule(female, 1.0, 0.0)
     >>> r(titanic.iloc[0]), r(titanic.iloc[1])
@@ -70,14 +161,17 @@ class Rule:
     >>> opt
     +0.7420 if Sex==female
     """
+
     # max_col attribute to change number of propositions
-    def __init__(self, q=lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10, alpha = 1):
+    def __init__(self, objective=SquaredLossObjective, q=lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10,
+                 alpha=1):
         self.q = q
         self.y = y
         self.z = z
         self.reg = reg
         self.max_col_attr = max_col_attr
         self.alpha = alpha
+        self.objective = objective
 
     def __call__(self, x):
         return self.y if self.q(x) else self.z
@@ -85,20 +179,25 @@ class Rule:
     def __repr__(self):
         return f'{self.y:+10.4f} if {self.q}'
 
-
-    def fit(self, data, target):
+    def fit(self, data, target, scores=None):
         """
+        attempting to find the best rule for over X/Y (data/target). improving over prior scores
+
         :param data:
         :param target:
+        :param scores: prior scores
         :return:
+
         """
-        obj = SquaredLossObjective(data, target, reg=self.reg)
+        obj = self.objective(data, target, reg=self.reg,
+                             scores=scores)  # scores not compatible w/ SLO <-- change to follow same convention.
+        # create residuals within init. modify implementation for that
         self.q = obj.search(max_col_attr=self.max_col_attr, alpha=self.alpha)
         self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
 
 
 def exp_loss(y, score):
-    return exp(-y*score)
+    return exp(-y * score)
 
 
 class ExponentialObjective:
@@ -125,7 +224,7 @@ class ExponentialObjective:
         self.data = data
         self.target = [1 if target[i] == pos_class else -1 for i in range(len(target))]
         self.reg = reg
-        self.scores = scores or [0.0]*len(target)
+        self.scores = scores or [0.0] * len(target)
 
     def _gradient_summary(self, rows):
         sum_g, sum_h = 0.0, 0.0
@@ -156,15 +255,17 @@ class ExponentialObjective:
         :return:
         """
         sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
-        return sum_g**2 / (2*len(self.data)*(self.reg + sum_h))
+        return sum_g ** 2 / (2 * len(self.data) * (self.reg + sum_h))
 
-    def opt_value(self, q):
-        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+    def opt_value(self, rows):
+        #        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+
+        sum_g, sum_h = self._gradient_summary(rows)
         return -sum_g / (self.reg + sum_h)
 
-    def search(self, max_col_attr=10):
+    def search(self, max_col_attr=10, alpha=1):
         ctx = Context.from_df(self.data, max_col_attr=max_col_attr)
-        return ctx.search(self._f, self._g)
+        return ctx.search(self._f, self._g, alpha)
         # # here we need the function in list of row indices; can we save some of these conversions?
         # def f(rows):
         #     c = len(rows)
@@ -179,23 +280,30 @@ class ExponentialObjective:
         # return ctx.search(f, g)
 
 
-
-
 class AdditiveRuleEnsemble:
     """
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> target = titanic.Survived
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
+    >>> classification_target = [1 if target.iloc[i] == 1 else -1 for i in range(len(target))]
+    >>> class_model = AdditiveRuleEnsemble(reg=50, k=4, objective=ExponentialObjective)
+    >>> class_model.fit(titanic, classification_target)
+    >>> class_model
+       -0.2200 if
+       +0.7501 if Pclass<=2 & Sex==female
+       -0.5277 if Pclass>=2 & Sex==male
+       +0.4007 if Sex==female & SibSp<=1.0
     >>> model = AdditiveRuleEnsemble(reg=50, k=4)
     >>> model.fit(titanic, target)
     >>> model
+       +0.0000 if
        +0.6873 if Sex==female
        +0.2570 if Fare>=10.5 & Pclass<=2
        -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
-       +0.1324 if Pclass>=3 & Sex==male & SibSp<=1.0
     """
 
-    def __init__(self, members=[], reg=0, k=3, max_col_attr=10, alpha_function = lambda k: 1, min_alpha = 0.5, alphas = []):
+    def __init__(self, members=[], reg=0, k=3, max_col_attr=10, alpha_function=lambda k: 1, min_alpha=0.5, alphas=[],
+                 objective=SquaredLossObjective):
         self.reg = reg
         self.members = members
         self.k = k
@@ -203,6 +311,7 @@ class AdditiveRuleEnsemble:
         self.alpha_function = alpha_function
         self.min_alpha = min_alpha
         self.alphas = alphas
+        self.objective = objective
 
     def reset(self):
         self.members = []
@@ -219,47 +328,51 @@ class AdditiveRuleEnsemble:
         for rule in self.members:
             rule_complexity = len(str(rule.__repr__()).split('&'))
             model_complexity += rule_complexity
-        return model_complexity-1
+        return model_complexity + len(self.members)  # counting prediction value of rule in complexity
 
     # have two methods, add first rule or other rule.
     # alternatively, create new ensable each time where we load an ensamble from data and .fit the new one.
     # ^ immutable datatypes --> less bug prone
 
     def add_rule(self, data, labels):
-        res = [labels.iloc[i] - self(data.iloc[i]) for i in range(len(data))]
+        scores = [self(data.iloc[i]) for i in range(len(data))]
         alpha = self.alpha_function(len(self.members))
-        r = Rule(reg=self.reg, alpha=alpha)
-#        r = Rule(reg=self.reg, alpha=alpha, objective_function = (g,h))
+        r = Rule(reg=self.reg, alpha=alpha, objective=self.objective)
+        #        r = Rule(reg=self.reg, alpha=alpha, objective_function = (g,h))
 
         if not len(self.members):  # need to generalise this better
-            r.y = sum([res[i] - 0 for i in range(len(res))]) / (0.5 * self.reg + len(res))
+            # if query selects all data, do thing, else obj val
+            obj = self.objective(data, labels, reg=self.reg)
+            r.y = obj.opt_value(range(len(labels)))
             r.q = Conjunction(Context([], []).attributes)
+        #            r.y = sum([scores[i] - 0 for i in range(len(scores))]) / (0.5 * self.reg + len(scores))
         else:
-            r.fit(data, res) # g terms and h terms as columns are actually needed in a more general sense. g terms are residuals, h terms are a constant
+            # before conjunction sort propositions inversly proportional to probability
+            r.fit(data, labels,
+                  scores)  # g terms and h terms as columns are actually needed in a more general sense. g terms are residuals, h terms are a constant
 
-        if not len(r.q) and len(self.members) == 1:
+        if not len(r.q) and len(self.members) >= 1:
             self.members[0].y += r.y
         else:
             self.members += [r]
             self.alphas.append(alpha)
 
     def fit(self, data, labels):
-        self.members = []
-
         while len(self.members) < self.k:
             self.add_rule(data, labels)
 
+    #            print(self.members[-1])
 
     def score(self, data, labels, n=None):  # only works when target is in column 1
-        if n==None:
-            n=len(labels)
+        if n == None:
+            n = len(labels)
         rules_prediction = [self(data.iloc[i]) for i in range(n)]
-        #rmse = sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)]) ** 0.5
+        # rmse = sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)]) ** 0.5
         # rme = sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)]) ** 0.5
-        rmse = (sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)])/(len(labels))) ** 0.5
+        rmse = (sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)]) / (len(labels))) ** 0.5
         return rmse
 
-    def save_ensamble(self, exp_res): # this or the other version is redundant
+    def save_ensamble(self, exp_res):  # this or the other version is redundant
         import datetime
 
         dataset_name, target_name, ensamble, rmse_train, rmse_test, feature_names_to_drop = exp_res
@@ -301,21 +414,21 @@ class AdditiveRuleEnsemble:
             #            f.write('alpha ' + str(i) + ":" + str(alphas[i]) + '\n')
             f.write('alphas_:_' + str(alphas) + '\n')
 
+        return save_dir
 
 
-
-def save_exp_res(exp_res):
+def save_exp_res(exp_res, timestamp, name="ensemble_results"):
     import datetime
 
     dataset_name, target_name, ensamble, train_scores, test_scores, model_complexities, feature_names_to_drop, n = exp_res
 
     rules = ensamble.members
-    alpha_function = ensamble.alpha_function # cant save alpha function at present in an easily useable way. for now assume using same alpha as always
+    alpha_function = ensamble.alpha_function  # cant save alpha function at present in an easily useable way. for now assume using same alpha as always
     alphas = ensamble.alphas
     # still need to save, number of datapoints, plot
 
     try:
-        save_dir = os.path.join(os.getcwd(), "results", dataset_name, str(datetime.datetime.now()))
+        save_dir = os.path.join(os.getcwd(), "results", dataset_name, timestamp)
         print(save_dir)
         os.makedirs(save_dir)
     except FileExistsError:
@@ -323,11 +436,11 @@ def save_exp_res(exp_res):
     except:
         print('other error')
 
-    with open(os.path.join(save_dir, 'ensamble_data.txt'), 'w') as f:
+    with open(os.path.join(save_dir, name + '.txt'), 'w') as f:
         f.write('dataset_name_:_' + dataset_name + '\n')
         f.write('target_name_:_' + target_name + '\n')
         f.write('dropped_attributes_:_' + str(feature_names_to_drop) + '\n')
-#        f.write('alpha function: ' + str(alpha_function) + '\n')
+        #        f.write('alpha function: ' + str(alpha_function) + '\n')
         f.write('max_col_attr_:_' + str(ensamble.max_col_attr) + '\n')
 
         f.write('k_:_' + str(ensamble.k) + '\n')
@@ -339,14 +452,15 @@ def save_exp_res(exp_res):
         f.write('test_scores_:_' + str(test_scores) + '\n')
         f.write('model_complexities_:_' + str(model_complexities) + '\n')
 
-#        for i in range(len(rules)):
-#            f.write('rule ' + str(i) + ":" + str(rules[i].__repr__()) + '\n')
+        #        for i in range(len(rules)):
+        #            f.write('rule ' + str(i) + ":" + str(rules[i].__repr__()) + '\n')
         f.write('rules_:_' + str([[rule.y, rule.q, rule.z] for rule in rules]) + '\n')
 
-#        for i in range(len(alphas)):
-#            f.write('alpha ' + str(i) + ":" + str(alphas[i]) + '\n')
+        #        for i in range(len(alphas)):
+        #            f.write('alpha ' + str(i) + ":" + str(alphas[i]) + '\n')
         f.write('alphas_:_' + str(alphas) + '\n')
         result_df = pd.DataFrame()
+
 
 def cast(val):
     if '.' in val:
@@ -361,12 +475,14 @@ def cast(val):
             val = val
     return val
 
+
 def constraint_maker(string):
     v = 1
     k = 0
 
-    ops = [("<=", Constraint.less_equals), (">=", Constraint.greater_equals), ("==", Constraint.equals), ("<", Constraint.less_than), (">", Constraint.greater_than)]
-    for op,const in ops:
+    ops = [("<=", Constraint.less_equals), (">=", Constraint.greater_equals), ("==", Constraint.equals),
+           ("<", Constraint.less_than), (">", Constraint.greater_than)]
+    for op, const in ops:
         if op in string:
             s = string.split(op)
             return const(s[v]), s[k]
@@ -391,6 +507,7 @@ def constraint_maker(string):
         s = string.split("==")
         return Constraint.equals(cast(s[v])), s[k]
     '''
+
 
 def string_to_conjunction(ps):
     if not len(ps):
@@ -420,14 +537,14 @@ def load_result(dataset_name, timestamp):
     min_alpha = float(result_dict["min_alpha"])
 
     alphas = literal_eval(result_dict["alphas"])
-#    alphas = [float(alpha) for alpha in result_dict["alphas"][1:-1].split(',')]
+    #    alphas = [float(alpha) for alpha in result_dict["alphas"][1:-1].split(',')]
 
     rules_string = result_dict['rules']
     rules_string_list = [item.strip() for item in rules_string[1:-1].split(',')]
 
     members = []
     for i in range(0, len(rules_string_list), 3):
-        (y, ps, z) = rules_string_list[i][1:], rules_string_list[i+1], rules_string_list[i+2][:-2]
+        (y, ps, z) = rules_string_list[i][1:], rules_string_list[i + 1], rules_string_list[i + 2][:-2]
         q = string_to_conjunction(ps)
         rule = Rule(y=float(y), q=q, z=float(z), reg=reg, max_col_attr=max_col_attr, alpha=alphas[int(i // 3)])
         members.append(rule)
@@ -436,16 +553,19 @@ def load_result(dataset_name, timestamp):
     test_scores = literal_eval(result_dict["test_scores"])
     model_complexities = literal_eval(result_dict["model_complexities"])
 
-#    train_scores = [float(train_score) for train_score in result_dict["train_scores"][1:-1].split(',')]
-#    test_scores = [float(test_score) for test_score in result_dict["test_scores"][1:-1].split(',')]
-#    model_complexities = [int(model_complexity) for model_complexity in result_dict["model_complexities"][1:-1].split(',')]
+    #    train_scores = [float(train_score) for train_score in result_dict["train_scores"][1:-1].split(',')]
+    #    test_scores = [float(test_score) for test_score in result_dict["test_scores"][1:-1].split(',')]
+    #    model_complexities = [int(model_complexity) for model_complexity in result_dict["model_complexities"][1:-1].split(',')]
 
-
-    ARE = AdditiveRuleEnsemble(members=members, reg=reg, k=k, max_col_attr=max_col_attr, alpha_function=alpha_function, min_alpha=min_alpha, alphas=alphas)
+    ARE = AdditiveRuleEnsemble(members=members, reg=reg, k=k, max_col_attr=max_col_attr, alpha_function=alpha_function,
+                               min_alpha=min_alpha, alphas=alphas)
 
     return ARE, train_scores, test_scores, model_complexities
 
 
 if __name__ == "__main__":
     import doctest
-    doctest.testmod(verbose = True)
+
+    doctest.testmod(verbose=True)
+
+
