@@ -285,7 +285,6 @@ class AdditiveRuleEnsemble:
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> target = titanic.Survived
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
-    >>> classification_target = [1 if target.iloc[i] == 1 else -1 for i in range(len(target))]
     >>> class_model = AdditiveRuleEnsemble(reg=50, k=4, objective=ExponentialObjective)
     >>> class_model.fit(titanic, classification_target)
     >>> class_model
