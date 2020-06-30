@@ -36,6 +36,7 @@ well with Pandas. For example:
 import pandas as pd
 import os
 from ast import literal_eval
+from math import exp
 
 #from realkd.search import Conjunction
 #from realkd.search import KeyValueProposition
@@ -45,9 +46,90 @@ from ast import literal_eval
 from orb.search import Conjunction
 from orb.search import KeyValueProposition
 from orb.search import Constraint
-from orb.search import SquaredLossObjective
+# from orb.search import SquaredLossObjective
 from orb.search import Context
+from orb.search import DfWrapper, cov_mean_bound
 
+class SquaredLossObjective:
+    """
+    Rule boosting objective function for squared loss.
+
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> obj = SquaredLossObjective(titanic, titanic['Survived'])
+    >>> female = Conjunction([KeyValueProposition('Sex', Constraint.equals('female'))])
+    >>> first_class = Conjunction([KeyValueProposition('Pclass', Constraint.less_equals(1))])
+    >>> obj(female)
+    0.19404590848327577
+    >>> reg_obj = SquaredLossObjective(titanic.drop(columns=['Survived']), titanic['Survived'], reg=2)
+    >>> reg_obj(female)
+    0.19342988972618597
+    >>> reg_obj(first_class)
+    0.09566220318908493
+    >>> reg_obj._mean(female)
+    0.7420382165605095
+    >>> reg_obj._mean(first_class)
+    0.6296296296296297
+    >>> reg_obj.search()
+    Sex==female
+    """
+
+    def __init__(self, data, target, scores=None, reg=0):
+        """
+        :param data:
+        :param target: _series_ of residuals values of matching dimension
+        :param reg:
+        """
+        self.m = len(data)
+        self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        scores = scores or [0]*self.m
+        self.res = [target.iloc[i] - scores[i] for i in range(self.m)]
+        self.reg = reg
+
+    def _f(self, count, mean):
+        return self._reg_term(count)*count/self.m * pow(mean, 2)
+
+    def _reg_term(self, c):
+        return 1 / (1 + self.reg / (2 * c))
+
+    def _count(self, q): #almost code duplication: Impact
+        return sum(1 for _ in filter(q, self.data))
+
+    def _mean(self, q): #code duplication: Impact
+        s, c = 0.0, 0.0
+        for i in range(self.m):
+            if q(self.data[i]):
+                s += self.res[i]
+                c += 1
+        return s/c
+
+    #
+    def search(self, max_col_attr=10, alpha = 1):
+        # here we need the function in list of row indices; can we save some of these conversions?
+        def f(rows):
+            c = len(rows)
+            if c == 0:
+                return 0.0
+            m = sum(self.res[i] for i in rows) / c
+            return self._f(c, m)
+
+        g = cov_mean_bound(self.res, lambda c, m: self._f(c, m))
+
+        ctx = Context.from_df(self.data.df, max_col_attr=max_col_attr)
+        return ctx.search(f, g, alpha)
+
+    def opt_value(self, rows):
+        s, c = 0.0, 0
+        for i in rows:
+            s += self.res[i]
+            c += 1
+
+        return s / (self.reg/2 + c) if (c > 0 or self.reg > 0) else 0.0
+
+    def __call__(self, q):
+        c = self._count(q)
+        m = self._mean(q)
+        return self._f(c, m)
 
 class Rule:
     """
@@ -78,13 +160,14 @@ class Rule:
     +0.7420 if Sex==female
     """
     # max_col attribute to change number of propositions
-    def __init__(self, q = lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10, alpha = 1):
+    def __init__(self, objective=SquaredLossObjective, q = lambda x: True, y=0.0, z=0.0, reg=0.0, max_col_attr=10, alpha = 1):
         self.q = q
         self.y = y
         self.z = z
         self.reg = reg
         self.max_col_attr = max_col_attr
         self.alpha = alpha
+        self.objective=objective
 
     def __call__(self, x):
         return self.y if self.q(x) else self.z
@@ -93,15 +176,106 @@ class Rule:
         return f'{self.y:+10.4f} if {self.q}'
 
 
-    def fit(self, data, target):
+    def fit(self, data, target, scores=None):
+        """
+        attempting to find the best rule for over X/Y (data/target). improving over prior scores
+
+        :param data:
+        :param target:
+        :param scores: prior scores
+        :return:
+
+        """
+        obj = self.objective(data, target, reg=self.reg, scores=scores) # scores not compatible w/ SLO <-- change to follow same convention.
+        # create residuals within init. modify implementation for that
+        self.q = obj.search(max_col_attr=self.max_col_attr, alpha = self.alpha)
+        self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
+
+
+def exp_loss(y, score):
+    return exp(-y*score)
+
+
+class ExponentialObjective:
+    """
+    >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
+    >>> female = KeyValueProposition('Sex', Constraint.equals('female'))
+    >>> obj = ExponentialObjective(titanic.drop(columns=['Survived']), titanic.Survived, pos_class=1)
+    >>> obj.opt_value(female)
+    0.4840764331210191
+    >>> obj(female)
+    0.04129047016520477
+    >>> q = obj.search()
+    >>> obj.opt_value(q)
+    >>> q
+    """
+
+    def __init__(self, data, target, pos_class=1.0, reg=0.0, scores=None):
         """
         :param data:
         :param target:
+        :param reg:
+        :param scores: proper scoring function l(y, s) = l(-y, -s)
+        """
+        self.data = data
+        self.target = [1 if target[i] == pos_class else -1 for i in range(len(target))]
+        self.reg = reg
+        self.scores = scores or [0.0]*len(target)
+
+    def _gradient_summary(self, rows):
+        sum_g, sum_h = 0.0, 0.0
+        for i in rows:
+            loss = exp(-self.target[i] * self.scores[i])
+            sum_g += -self.target[i] * loss
+            sum_h += loss
+        return sum_g, sum_h
+
+    def _f(self, rows):
+        if len(rows) == 0:
+            return 0.0
+        sum_g, sum_h = self._gradient_summary(rows)
+        return sum_g ** 2 / (2 * len(self.data) * (self.reg + sum_h))
+
+    def _g(self, rows):
+        pos_rows = [i for i in rows if self.target[i] == 1]
+        neg_rows = [i for i in rows if self.target[i] == -1]
+        pos_val = self._f(pos_rows)
+        neg_val = self._f(neg_rows)
+        return max(pos_val, neg_val)
+
+    def __call__(self, q):
+        """
+        g_i = -y*exp(-y*score)
+        h_i = exp(-y*score)
+        :param q:
         :return:
         """
-        obj = SquaredLossObjective(data, target, reg=self.reg)
-        self.q = obj.search(max_col_attr=self.max_col_attr, alpha = self.alpha)
-        self.y = obj.opt_value((i for i in range(len(data)) if self.q(data.iloc[i])))
+        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+        return sum_g**2 / (2*len(self.data)*(self.reg + sum_h))
+
+    def opt_value(self, rows):
+#        sum_g, sum_h = self._gradient_summary(i for i in range(len(self.data)) if q(self.data.iloc[i]))
+
+        sum_g, sum_h = self._gradient_summary(rows)
+        return -sum_g / (self.reg + sum_h)
+
+    def search(self, max_col_attr=10, alpha=1):
+        ctx = Context.from_df(self.data, max_col_attr=max_col_attr)
+        return ctx.search(self._f, self._g, alpha)
+        # # here we need the function in list of row indices; can we save some of these conversions?
+        # def f(rows):
+        #     c = len(rows)
+        #     if c == 0:
+        #         return 0.0
+        #     m = sum(self.target[i] for i in rows) / c
+        #     return self._f(c, m)
+        #
+        # g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
+        #
+
+        # return ctx.search(f, g)
+
+
 
 
 class AdditiveRuleEnsemble:
@@ -109,16 +283,24 @@ class AdditiveRuleEnsemble:
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> target = titanic.Survived
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
+    >>> classification_target = [1 if target.iloc[i] == 1 else -1 for i in range(len(target))]
+    >>> class_model = AdditiveRuleEnsemble(reg=50, k=4, objective=ExponentialObjective)
+    >>> class_model.fit(titanic, classification_target)
+    >>> class_model
+       -0.2200 if
+       +0.7501 if Pclass<=2 & Sex==female
+       -0.5277 if Pclass>=2 & Sex==male
+       +0.4007 if Sex==female & SibSp<=1.0
     >>> model = AdditiveRuleEnsemble(reg=50, k=4)
     >>> model.fit(titanic, target)
     >>> model
+       +0.0000 if
        +0.6873 if Sex==female
        +0.2570 if Fare>=10.5 & Pclass<=2
        -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
-       +0.1324 if Pclass>=3 & Sex==male & SibSp<=1.0
     """
 
-    def __init__(self, members=[], reg=0, k=3, max_col_attr=10, alpha_function = lambda k: 1, min_alpha = 0.5, alphas = []):
+    def __init__(self, members=[], reg=0, k=3, max_col_attr=10, alpha_function = lambda k: 1, min_alpha = 0.5, alphas = [], objective=SquaredLossObjective):
         self.reg = reg
         self.members = members
         self.k = k
@@ -126,6 +308,7 @@ class AdditiveRuleEnsemble:
         self.alpha_function = alpha_function
         self.min_alpha = min_alpha
         self.alphas = alphas
+        self.objective=objective
 
     def reset(self):
         self.members = []
@@ -142,35 +325,39 @@ class AdditiveRuleEnsemble:
         for rule in self.members:
             rule_complexity = len(str(rule.__repr__()).split('&'))
             model_complexity += rule_complexity
-        return model_complexity-1
+        return model_complexity+len(self.members) # counting prediction value of rule in complexity
 
     # have two methods, add first rule or other rule.
     # alternatively, create new ensable each time where we load an ensamble from data and .fit the new one.
     # ^ immutable datatypes --> less bug prone
 
     def add_rule(self, data, labels):
-        res = [labels.iloc[i] - self(data.iloc[i]) for i in range(len(data))]
+        scores = [self(data.iloc[i]) for i in range(len(data))]
         alpha = self.alpha_function(len(self.members))
-        r = Rule(reg=self.reg, alpha=alpha)
+        r = Rule(reg=self.reg, alpha=alpha, objective=self.objective)
 #        r = Rule(reg=self.reg, alpha=alpha, objective_function = (g,h))
 
         if not len(self.members):  # need to generalise this better
-            r.y = sum([res[i] - 0 for i in range(len(res))]) / (0.5 * self.reg + len(res))
+            # if query selects all data, do thing, else obj val
+            obj = self.objective(data, labels, reg=self.reg)
+            r.y = obj.opt_value(range(len(labels)))
             r.q = Conjunction(Context([], []).attributes)
+#            r.y = sum([scores[i] - 0 for i in range(len(scores))]) / (0.5 * self.reg + len(scores))
         else:
-            r.fit(data, res) # g terms and h terms as columns are actually needed in a more general sense. g terms are residuals, h terms are a constant
+            # before conjunction sort propositions inversly proportional to probability
+            r.fit(data, labels, scores) # g terms and h terms as columns are actually needed in a more general sense. g terms are residuals, h terms are a constant
 
-        if not len(r.q) and len(self.members) == 1:
+        if not len(r.q) and len(self.members) >= 1:
             self.members[0].y += r.y
         else:
             self.members += [r]
             self.alphas.append(alpha)
 
-    def fit(self, data, labels):
-        self.members = []
 
+    def fit(self, data, labels):
         while len(self.members) < self.k:
             self.add_rule(data, labels)
+#            print(self.members[-1])
 
 
     def score(self, data, labels, n=None):  # only works when target is in column 1
@@ -224,10 +411,12 @@ class AdditiveRuleEnsemble:
             #            f.write('alpha ' + str(i) + ":" + str(alphas[i]) + '\n')
             f.write('alphas_:_' + str(alphas) + '\n')
 
+        return save_dir
 
 
 
-def save_exp_res(exp_res):
+
+def save_exp_res(exp_res, timestamp, name="ensemble_results"):
     import datetime
 
     dataset_name, target_name, ensamble, train_scores, test_scores, model_complexities, feature_names_to_drop, n = exp_res
@@ -238,7 +427,7 @@ def save_exp_res(exp_res):
     # still need to save, number of datapoints, plot
 
     try:
-        save_dir = os.path.join(os.getcwd(), "results", dataset_name, str(datetime.datetime.now()))
+        save_dir = os.path.join(os.getcwd(), "results", dataset_name, timestamp)
         print(save_dir)
         os.makedirs(save_dir)
     except FileExistsError:
@@ -246,7 +435,7 @@ def save_exp_res(exp_res):
     except:
         print('other error')
 
-    with open(os.path.join(save_dir, 'ensamble_data.txt'), 'w') as f:
+    with open(os.path.join(save_dir, name+'.txt'), 'w') as f:
         f.write('dataset_name_:_' + dataset_name + '\n')
         f.write('target_name_:_' + target_name + '\n')
         f.write('dropped_attributes_:_' + str(feature_names_to_drop) + '\n')
