@@ -61,12 +61,24 @@ class Constraint:
         return Constraint(lambda v: v <= value, lambda n: str(n)+'<='+str(value))
 
     @staticmethod
+    def less_than(value):
+        return Constraint(lambda v: v < value, lambda n: str(n)+'<'+str(value))
+
+    @staticmethod
     def greater_equals(value):
         return Constraint(lambda v: v >= value, lambda n: str(n)+'>='+str(value))
 
     @staticmethod
+    def greater_than(value):
+        return Constraint(lambda v: v > value, lambda n: str(n)+'>'+str(value))
+
+    @staticmethod
     def equals(value):
         return Constraint(lambda v: v == value, lambda n: str(n)+'=='+str(value))
+
+#    @staticmethod
+#    def not_equals(value): #added. if time slows down, remove
+#        return Constraint(lambda v: v != value, lambda n: str(n)+'!='+str(value))
 
 
 class KeyValueProposition:
@@ -270,6 +282,8 @@ class Context:
             if df[c].dtype.kind in 'O':
                 attributes += [KeyValueProposition(c, Constraint.equals(v)) for v in df[c].unique()]
 
+#        print("number of propositions: ", len(attributes))
+
         return Context(attributes, [df.iloc[i] for i in range(len(df.axes[0]))], sort_attributes)
 
     def __init__(self, attributes, objects, sort_attributes=True):
@@ -280,14 +294,18 @@ class Context:
         # for now we materialise the whole binary relation; in the future can be on demand
         self.extents = [SortedSet([i for i in range(self.m) if attributes[j](objects[i])]) for j in range(self.n)]
 
+#        self.extents = self.extents[::-1]
+
+        # check sorting in reverse order and see if critical index has an impact. this may not actually yield improvments globaly. 
+
         # sort attribute in ascending order of extent size
         if sort_attributes:
             attribute_order = list(sorted(range(self.n), key=lambda i: len(self.extents[i])))
             self.attributes = [self.attributes[i] for i in attribute_order]
             self.extents = [self.extents[i] for i in attribute_order]
 
-    def search(self, f, g):
-        opt = max(self.bfs(f, g), key=Node.value)
+    def search(self, f, g, alpha = 1):
+        opt = max(self.vfs(f, g, alpha), key=Node.value)
         min_generator = self.greedy_simplification(opt.closure, opt.extension)
         return Conjunction(map(lambda i: self.attributes[i], min_generator))
 
@@ -368,7 +386,8 @@ class Context:
 
         return Node(generator, SortedSet(closure), extension, i, crit_idx, val, bound)
 
-    def bfs(self, f, g):
+
+    def vfs(self, f, g, alpha=1, que = deque, add = deque.append, rem = deque.popleft): #variable_frist_search. default = breadth first search
         """
         A first example with trivial objective and bounding function is as follows. In this example
         the optimal extension is the empty extension, which is generated via the
@@ -378,7 +397,7 @@ class Context:
         ...          [1, 0, 1, 0],
         ...          [0, 1, 0, 1]]
         >>> ctx = Context.from_tab(table)
-        >>> search = ctx.bfs(lambda e: -len(e), lambda e: 1)
+        >>> search = ctx.vfs(lambda e: -len(e), lambda e: 1)
         >>> for n in search:
         ...     print(n)
         N([0, 3], [0, 1, 2, 3], 0, 1, [])
@@ -388,7 +407,7 @@ class Context:
         >>> values = [-1, 1, 1, -1]
         >>> f = lambda e: sum((values[i] for i in e))/4
         >>> g = lambda e: sum((values[i] for i in e if values[i]==1))/4
-        >>> search = ctx.bfs(f, g)
+        >>> search = ctx.vfs(f, g)
         >>> for n in search:
         ...     print(n)
         N([], [], 0, inf, [0, 1, 2, 3])
@@ -405,7 +424,7 @@ class Context:
         >>> labels = [1, 0, 1, 0, 0, 0]
         >>> f = impact(labels)
         >>> g = cov_incr_mean_bound(labels, impact_count_mean(labels))
-        >>> search = ctx.bfs(f, g)
+        >>> search = ctx.vfs(f, g)
         >>> for n in search:
         ...     print(n)
         N([], [], 0, inf, [0, 1, 2, 3, 4, 5])
@@ -420,32 +439,46 @@ class Context:
 
         :param f: objective function
         :param g: bounding function satisfying that g(I) >= max {f(J): J >= I}
+
+        >>> 
         """
-        boundary = deque()
+
+        # decrease alpha based on time budget
+        # plot tradeoff curve for ensamble
+        # avoid best_first for now.
+        # come back to classification later
+        # look at sorted list later
+        # for every rule ensamble, get k accuracy/interpretability tradeoffs
+        # plot(|model_complexity|,|accuracy|)
+
+        # 11 June sub date: lets do it! 
+        
+        boundary = que()
         full = self.extension([])
         root = Node(SortedSet([]), SortedSet([]), full, -1, self.n, f(full), inf)
         opt = root
         yield root
-        boundary.append((range(self.n), root))
 
+        add(boundary, ([(i, self.n, inf) for i in range(self.n)], root))
         while boundary:
-            ops, current = boundary.popleft()
+            augs, current = rem(boundary)
             children = []
-            for a in ops:
+            for a,c,o in augs:
+                if min(a,c) < current.gen_index or a in current.closure or o < opt.val or opt.val/o > alpha:
+                    continue
+                
                 child = self.refinement(current, a, f, g, opt.val)
                 if child:
                     if child.valid:
                         opt = max(opt, child, key=Node.value)
                         yield child
                     children += [child]
-            filtered = list(filter(lambda c: c.val_bound > opt.val, children))
-            ops = []
-            for child in reversed(filtered):
-                if child.valid:
-                    boundary.append(([i for i in ops if i not in child.closure], child))
-                # [i for i in ops if i not in child.closure]
-                #ops = [child.gen_index] + ops
-                ops = [child.gen_index] + ops
+            filtered = list(filter(lambda c: c.val_bound/opt.val > alpha, children))
+
+            augs = [(child.gen_index,child.crit_idx,child.val_bound) for child in filtered if child.gen_index not in current.closure and child.crit_idx > current.gen_index]
+
+            for child in children:
+                add(boundary, (augs, child))
 
 
 def cov_squared_dev(labels):
@@ -531,7 +564,7 @@ class Impact:
         return ctx.search(f, g)
 
 
-class SquaredLossObjective:
+class ExponentialLossObjective:
     """
     Rule boosting objective function for squared loss.
 
@@ -583,7 +616,8 @@ class SquaredLossObjective:
                 c += 1
         return s/c
 
-    def search(self, max_col_attr=10):
+    #
+    def search(self, max_col_attr=10, alpha = 1):
         # here we need the function in list of row indices; can we save some of these conversions?
         def f(rows):
             c = len(rows)
@@ -595,7 +629,87 @@ class SquaredLossObjective:
         g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
 
         ctx = Context.from_df(self.data.df, max_col_attr=max_col_attr)
-        return ctx.search(f, g)
+        return ctx.search(f, g, alpha)
+
+    def opt_value(self, rows):
+        s, c = 0.0, 0
+        for i in rows:
+            s += self.target[i]
+            c += 1
+
+        return s / (self.reg/2 + c) if (c > 0 or self.reg > 0) else 0.0
+
+    def __call__(self, q):
+        c = self._count(q)
+        m = self._mean(q)
+        return self._f(c, m)
+
+class SquaredLossObjective:
+    """
+    Rule boosting objective function for squared loss.
+
+    >>> titanic = pd.read_csv("../datasets/titanic/train.csv")
+    >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin'], inplace=True)
+    >>> obj = SquaredLossObjective(titanic, titanic['Survived'])
+    >>> female = Conjunction([KeyValueProposition('Sex', Constraint.equals('female'))])
+    >>> first_class = Conjunction([KeyValueProposition('Pclass', Constraint.less_equals(1))])
+    >>> obj(female)
+    0.19404590848327577
+    >>> reg_obj = SquaredLossObjective(titanic.drop(columns=['Survived']), titanic['Survived'], reg=2)
+    >>> reg_obj(female)
+    0.19342988972618597
+    >>> reg_obj(first_class)
+    0.09566220318908493
+    >>> reg_obj._mean(female)
+    0.7420382165605095
+    >>> reg_obj._mean(first_class)
+    0.6296296296296297
+    >>> reg_obj.search()
+    Sex==female
+    """
+
+    def __init__(self, data, target, reg=0):
+        """
+        :param data:
+        :param target: _series_ of residuals values of matching dimension
+        :param reg:
+        """
+        self.m = len(data)
+        self.data = DfWrapper(data) if isinstance(data, pd.DataFrame) else data
+        self.target = target
+        self.reg = reg
+
+    def _f(self, count, mean):
+        return self._reg_term(count)*count/self.m * pow(mean, 2)
+
+    def _reg_term(self, c):
+        return 1 / (1 + self.reg / (2 * c))
+
+    def _count(self, q): #almost code duplication: Impact
+        return sum(1 for _ in filter(q, self.data))
+
+    def _mean(self, q): #code duplication: Impact
+        s, c = 0.0, 0.0
+        for i in range(self.m):
+            if q(self.data[i]):
+                s += self.target[i]
+                c += 1
+        return s/c
+
+    #
+    def search(self, max_col_attr=10, alpha = 1):
+        # here we need the function in list of row indices; can we save some of these conversions?
+        def f(rows):
+            c = len(rows)
+            if c == 0:
+                return 0.0
+            m = sum(self.target[i] for i in rows) / c
+            return self._f(c, m)
+
+        g = cov_mean_bound(self.target, lambda c, m: self._f(c, m))
+
+        ctx = Context.from_df(self.data.df, max_col_attr=max_col_attr)
+        return ctx.search(f, g, alpha)
 
     def opt_value(self, rows):
         s, c = 0.0, 0
@@ -733,4 +847,5 @@ def cov_mean_bound(labels, f):
         return opt
 
     return bound
+
 
