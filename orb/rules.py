@@ -285,26 +285,26 @@ class AdditiveRuleEnsemble:
     >>> titanic = pd.read_csv('../datasets/titanic/train.csv')
     >>> target = titanic.Survived
     >>> titanic.drop(columns=['PassengerId', 'Name', 'Ticket', 'Cabin', 'Survived'], inplace=True)
+    >>> model = AdditiveRuleEnsemble(reg=50, k=4)
+    >>> model.fit(titanic, target)
+    >>> model
+       +0.3734 if
+       +0.5001 if Pclass<=2 & Sex==female
+       -0.2301 if Fare<=39.6875 & Parch<=1.0 & Pclass>=2 & Sex==male
+       +0.2417 if Age<=25.0 & Fare<=39.6875 & Fare>=7.8542 & Parch>=1.0 & SibSp<=1.0
     >>> class_model = AdditiveRuleEnsemble(reg=50, k=4, objective=ExponentialObjective)
-    >>> class_model.fit(titanic, classification_target)
+    >>> class_model.fit(titanic, target)
     >>> class_model
        -0.2200 if
        +0.7501 if Pclass<=2 & Sex==female
        -0.5277 if Pclass>=2 & Sex==male
        +0.4007 if Sex==female & SibSp<=1.0
-    >>> model = AdditiveRuleEnsemble(reg=50, k=4)
-    >>> model.fit(titanic, target)
-    >>> model
-       +0.0000 if
-       +0.6873 if Sex==female
-       +0.2570 if Fare>=10.5 & Pclass<=2
-       -0.2584 if Embarked==S & Fare>=7.8542 & Pclass>=3 & Sex==female
     """
 
     def __init__(self, members=[], reg=0, k=3, max_col_attr=10, alpha_function=lambda k: 1, min_alpha=0.5, alphas=[],
                  objective=SquaredLossObjective):
         self.reg = reg
-        self.members = members
+        self.members = members[:]
         self.k = k
         self.max_col_attr = max_col_attr
         self.alpha_function = alpha_function
