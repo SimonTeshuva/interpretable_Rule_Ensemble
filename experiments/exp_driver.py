@@ -1,5 +1,6 @@
 import re
 import os
+import rulefit
 
 import pandas as pd
 
@@ -16,9 +17,12 @@ from xgb_scripts.xgb_functions import generate_xgb_model
 from xgb_scripts.xgb_functions import count_nodes
 from xgb_scripts.xgb_functions import save_xgb_model
 from xgb_scripts.xgb_functions import save_xgb_trees
+from xgb_scripts.xgb_functions import score,count_nodes_and_leaves
+
 from xgb_scripts.xgb_functions import prediction_cost, explanation_cost, count_trees
 
 import xgboost as xgb
+from xgboost import XGBClassifier, XGBRegressor
 
 import graphviz
 
@@ -299,7 +303,7 @@ def generate_interpretability_curve(results, x_name, y_name, title_name, dataset
     plt.show()
 
 
-def exp_data_prep(dataset_name, model_class = "ensemble", norm_mean = False, downsample_size = None, random_seed = None):
+def exp_data_prep(dataset_name, model_class = "orb", norm_mean = False, downsample_size = None, random_seed = None):
     target_name, without = dataset_signature(dataset_name)
 
     data, target_name, n, random_seed = prep_data(dataset_name=dataset_name, target=target_name, without=without,
@@ -325,18 +329,18 @@ def exp_data_prep(dataset_name, model_class = "ensemble", norm_mean = False, dow
 
     return data, target_name, random_seed
 
-def save_exp_res(exp_res, timestamp, name="ensemble_results"):
+def save_ensemble_res(exp_res, ARE, timestamp, name="ensemble_results"):
     import datetime
+    columns = ["dataset", "target", "no_feat", "no_rows", "train_score", "test_score", "model_complexity",
+               'model_class', "objective_function", "problem_class", "model_parameters", "random_seed"]
 
-    dataset_name, target_name, ensamble, train_scores, test_scores, model_complexities, feature_names_to_drop, n = exp_res
-
-    rules = ensamble.members
-    alpha_function = ensamble.alpha_function  # cant save alpha function at present in an easily useable way. for now assume using same alpha as always
-    alphas = ensamble.alphas
+    rules = ARE.members
+    alpha_function = ARE.alpha_function  # cant save alpha function at present in an easily useable way. for now assume using same alpha as always
+    alphas = ARE.alphas
     # still need to save, number of datapoints, plot
 
     try:
-        save_dir = os.path.join(os.getcwd(), "results", dataset_name, timestamp)
+        save_dir = os.path.join(os.getcwd(), "results", exp_res["dataset"], timestamp)
         print(save_dir)
         os.makedirs(save_dir)
     except FileExistsError:
@@ -345,29 +349,16 @@ def save_exp_res(exp_res, timestamp, name="ensemble_results"):
         print('other error')
 
     with open(os.path.join(save_dir, name + '.txt'), 'w') as f:
-        f.write('dataset_name_:_' + dataset_name + '\n')
-        f.write('target_name_:_' + target_name + '\n')
-        f.write('dropped_attributes_:_' + str(feature_names_to_drop) + '\n')
+
+        for col in columns:
+            f.write(col + '_:_' + str(exp_res[col]) + '\n')
         #        f.write('alpha function: ' + str(alpha_function) + '\n')
-        f.write('max_col_attr_:_' + str(ensamble.max_col_attr) + '\n')
-
-        f.write('k_:_' + str(ensamble.k) + '\n')
-        f.write('reg_:_' + str(ensamble.reg) + '\n')
-        f.write('min_alpha_:_' + str(ensamble.min_alpha) + '\n')
-
-        f.write('n_:_' + str(n) + '\n')
-        f.write('train_scores_:_' + str(train_scores) + '\n')
-        f.write('test_scores_:_' + str(test_scores) + '\n')
-        f.write('model_complexities_:_' + str(model_complexities) + '\n')
-
-        #        for i in range(len(rules)):
-        #            f.write('rule ' + str(i) + ":" + str(rules[i].__repr__()) + '\n')
+        f.write('max_col_attr_:_' + str(ARE.max_col_attr) + '\n')
+        f.write('k_:_' + str(ARE.k) + '\n')
+        f.write('reg_:_' + str(ARE.reg) + '\n')
+        f.write('min_alpha_:_' + str(ARE.min_alpha) + '\n')
         f.write('rules_:_' + str([[rule.y, rule.q, rule.z] for rule in rules]) + '\n')
-
-        #        for i in range(len(alphas)):
-        #            f.write('alpha ' + str(i) + ":" + str(alphas[i]) + '\n')
         f.write('alphas_:_' + str(alphas) + '\n')
-        result_df = pd.DataFrame()
 
 
 def cast(val):
@@ -451,56 +442,384 @@ def generate_random_seed(max_seed=2**32 - 1):
     return random.randrange(max_seed)
 
 
-def generate_fit_model(data, target, model_class="ensemble", objective_function=SquaredLossObjective, model_params=[5, 50], alpha=0.8):
+def generate_fit_model(data, target, model_class="orb", objective_function=SquaredLossObjective, model_params=[5, 50], alpha=0.8):
 
     [train, train_target, test, test_target] = data
 
     # table with experiment options instead
+    # dict = {}
+    # accept string parameters as objective_functions for orb
 
-    if model_class=="ensemble":
+    if model_class=="orb": # swap name to "orb"
         [k, reg] = model_params
         alpha_function = lambda k: alpha
         model = AdditiveRuleEnsemble(k=k, reg=reg, alpha_function=alpha_function, objective=objective_function)
         model.fit(data=train, labels=train_target)
-    elif model_class=="forest":
+    elif model_class=="xgboost":
         [k, d, reg] = model_params
         model_type = "Regressor" if type(objective_function)==type(SquaredLossObjective) else "Classifier"
-        model, train_rmse, test_rmse = generate_xgb_model(data=data, k=k, d=d, reg=reg, model_type=model_type)
-    elif model_class == "tree":
+        model, train_rmse, test_rmse = generate_xgb_model(data=data, k=k, d=d, ld=reg, model_type=model_type)
+    elif model_class == "rule_fit":
+        [k, c] = model_params
         return
-    elif model_class=="rule_fit":
+    elif model_class == "tree":
         return
     else:
         return
 
     return model
 
-def exp(dataset_name, model_class = "ensemble", objective_function=SquaredLossObjective, model_params = [5, 50], norm_mean = False, downsample_size=None, random_seed=None, alpha=0.8):
-    '''
+def exp(dataset_name, model_class = "orb", objective_function=SquaredLossObjective, model_params = [5, 50], norm_mean = False, downsample_size=None, random_seed=None, alpha=0.8):
+    """
 
-    '''
-    target, without = dataset_signature(dataset_name)
+    """
+    timestamp = get_timestamp()
     data, target_name, random_seed = exp_data_prep(dataset_name, model_class=model_class,  norm_mean=norm_mean, downsample_size=downsample_size, random_seed=random_seed)
     [train, train_target, test, test_target] = data
 
-    model = generate_fit_model(data, model_class=model_class, objective_function=objective_function, model_params=model_params)
+    model = generate_fit_model(data, target_name, model_class=model_class, objective_function=objective_function, model_params=model_params)
+    model_type = "Regressor" if type(objective_function) == type(SquaredLossObjective) else "Classifier"
 
-    return
+    if model_class=="xgboost":
+        train_score = score(model, train, train_target)
+        test_score = score(model, test, test_target)
+        model_complexity = count_nodes_and_leaves(model)
+    else:
+        train_score = model.score(train, train_target)
+        test_score = model.score(test, test_target)
+        model_complexity = model.model_complexity()
+
+    exp_res = {"dataset": dataset_name, "target": target_name, "no_feat": len(train.columns), "no_rows": len(train_target) + len(test_target),
+               "train_score": train_score, "test_score": test_score,  "model_complexity": model_complexity,
+               'model_class': model_class, "objective_function": objective_function, "problem_class": model_type,
+               "model_parameters": model_params, "random_seed": random_seed, "timestamp": timestamp}
+
+    return exp_res, model
+
+def save_model(exp_res, model):
+    timestamp = exp_res["timestamp"]
+    if exp_res["model_class"] == "orb":
+        save_ensemble_res(exp_res, model, timestamp=timestamp)
+    elif exp_res["model_class"] == "xgboost":
+        save_xgb_model(model, exp_res["dataset"],timestamp)
+        save_xgb_trees(model, exp_res["dataset"], timestamp)
+    elif exp_res["model_class"] == "rule_fit":
+        pass
+    elif exp_res["model_class"] == "tree":
+        pass
+    else:
+        pass
+
+def exp_repeats(exp_params, repeats = 5, save_models = False):
+    df = pd.DataFrame(
+        columns=["dataset", "target", "no_feat", "no_rows", "train_score", "test_score", "model_complexity",
+                 'model_class', "objective_function", "problem_class", "model_parameters", "random_seed"])
+
+    for i in range(repeats):
+        exp_res, model = exp(*exp_params)
+        df.append(exp_res, ignore_index=True)
+        if save_models:
+            save_model(exp_res, model)
+
+    return df
+
+def exp_sweep(model_parameters, repeats = 3, d_vect=[1,3,5,7], clear_results = False, save_models=False):
+    df = pd.DataFrame(
+        columns=["dataset", "target", "no_feat", "no_rows", "train_score", "test_score", "model_complexity",
+                 'model_class', "objective_function", "problem_class", "model_parameters", "random_seed", "timestamp"])
+
+    max_k = model_parameters[3][0]
+    model_class = model_parameters[1]
+
+    for k in range(1, max_k+1):
+        print('k=', k)
+        if model_class == "xgboost":
+            for d in d_vect:
+                model_parameters[3][0] = k
+                model_parameters[3][1] = d
+                res = exp_repeats(model_parameters, repeats=repeats, save_models=save_models)
+                df.append(res, ignore_index=True)
+        else:
+            model_parameters[3][0] = k
+            res = exp_repeats(model_parameters, repeats=repeats, save_models=save_models)
+            df.append(res, ignore_index=True)
+
+    permission = 'w' if clear_results else 'a'
+    with open('results2.csv', permission) as f:
+        for row in df:
+            print(row) # write to csv. make and plot curves
+
+    # add a write to results csv
+    return df
+
+class DataIndependentEvaluator:
+
+    def __init__(self, string, f):
+        self.string = string
+        self.f = f
+
+    def __call__(self, model):
+        return self.f(model)
+
+    def __str__(self):
+        return self.string
+
+
+class DataDependentEvaluator:
+
+    def __init__(self, string, f):
+        self.string = string
+        self.f = f
+
+    def __call__(self, model, X=None, y=None):
+        return self.f(model, X, y)
+
+    def __str__(self):
+        return self.string
+
+
+def rule_complexity():
+    def f(model):
+        return sum([len(str(rule.__repr__()).split('&')) for rule in model.members])+len(model.members)
+
+    return DataIndependentEvaluator('rule_complexity', f)
+
+def forest_complexity():
+    def f(model):
+        trees = model.get_booster().get_dump()
+        trees = [tree.split('\n') for tree in trees]
+        nodes = sum([len([node for node in tree]) for tree in trees])
+        return nodes
+
+    return DataIndependentEvaluator('forest_complexity', f)
+
+def rmse():
+    def f(model, X, y):
+        return sum((model.predict(X) - y) ** 2) ** 0.5
+
+    return DataDependentEvaluator('rmse', f)
+
+# accuracy, exponential error add
+
+
+MODEL_MAP = {"orb": AdditiveRuleEnsemble, "xgb.Regressor": xgb.XGBRegressor, "xgb.XGBClassifier": xgb.XGBClassifier, "rulefit": rulefit}
+PROBLEM_MAP = {"SquaredLossObjective": SquaredLossObjective, "ExponentialObjective": ExponentialObjective,
+               "binary:logistic": "binary:logistic", "reg:squarederror": "reg:squarederror"}
+
+
+class Experiment:
+    def __init__(self, dataset_name, model_class="orb", objective="ExponentialObjective", params={'k':2, 'reg': 50},
+                 dde = [rmse], die = [rule_complexity], downsample_size = None):
+        self.dataset = dataset_name
+        self.model_class_key = model_class
+        self.model_class = MODEL_MAP[model_class]
+        self.params = params
+        self.dde = dde
+        self.die = die
+        self.seed = generate_random_seed()
+        self.downsample_size = downsample_size
+        self.objective = PROBLEM_MAP[objective]
+        self.norm_mean = True if model_class == "xgboost" else False
+        self.results = dict()
+
+    def run(self):
+
+        target_name, without = dataset_signature(self.dataset)
+        data, target, seed = exp_data_prep(dataset_name=self.dataset,
+                                           model_class=self.model_class, random_seed=self.seed,
+                                           downsample_size=self.downsample_size, norm_mean=self.norm_mean)
+        [train, train_target, test, test_target] = data
+
+
+        model = self.model_class(**self.params, objective=self.objective)
+        model.fit(train, train_target) # fitting on xgboost needs work
+
+        for evaluator in self.die:
+            eval_metric = evaluator()
+            self.results[str(evaluator)] = eval_metric(model)
+
+        for evaluator in self.dde: # failing here
+            eval_metric = evaluator()
+            self.results[str(evaluator)+"_train"] = eval_metric(model, train, train_target)
+            self.results[str(evaluator)+"_test"] = eval_metric(model, test, test_target)
+
+        res_dict = {"dataset": self.dataset,  "target": target_name, "no_feat": len(train.columns),
+                    "no_rows": len(train_target)+len(test_target), "model_params": {**self.params},
+                    "objective_function": self.objective, "model_class": self.model_class,
+                    "timestamp": get_timestamp(), "random_seed": generate_random_seed()}
+
+        # string rpr for evals
+
+        for key, value in self.results.items():
+            res_dict[key] = value
+
+        return res_dict
+
+
+def sweep(dataset_name, param_rows, repeats = 3, save_models = False, first=False):
+    evaluators = set()
+    for row in param_rows:
+        for e in row['evaluators']:
+            evaluators.add(e)
+
+    res_df = pd.DataFrame(columns=["dataset", "target", "no_feat", "no_rows",
+                                   "model_params",  "objective_function", "model_class",
+                                   *evaluators, "random_seed", "timestamp"])
+
+    rows = GridSearch(param_rows)
+
+    for rep in range(repeats):
+        for row in rows:
+            exp = Experiment(dataset_name, **row)
+            res = exp.run()
+            res_series = pd.Series(res)
+            res_df = res_df.append(res_series, ignore_index=True)
+            if save_models:
+                pass                # save_models
+
+#    res_df.to_csv('res.csv', mode= 'a' if first else 'w', encoding='utf-8', index=False, header=first)
+
+    return res_df
+
+
+def GridSearch(options, reg_scale = 10):
+    """
+    >>> option1= {"model_class": "orb", "objective": "ExponentialObjective", "params": {'k': 2, 'reg': 50}, "evaluators": ["orb_train_score", "orb_test_score", "orb_complexity"], "downsample_size": None}
+    >>> option2= {"model_class": "orb", "objective": "SquaredLossObjective", "params": {'k': 4, 'reg': 50}, "evaluators": ["orb_train_score", "orb_test_score", "orb_complexity"], "downsample_size": None}
+    >>> option3= {"model_class": "xgboost", "objective": "reg:squarederror", "params": {'k': 4, 'd': 3, 'reg': 50}, "evaluators": [], "downsample_size": None}
+    >>> options = [option1, option2, option3]
+    >>> GridSearch(options)
+    """
+
+    sweep_options = []
+    for option in options:
+        names = option.keys()
+
+        param_names = option["params"].keys()
+        strings = [(param, option["params"][param]) for param in param_names if type(param_names) in [list, str, tuple]]
+        numbers = [(param, option["params"][param]) for param in param_names if type(param_names) not in [list, str, tuple]]
+        params_options = lex_succ([numbers[i][1] for i in range(len(numbers))]) # this is where the non-integer options will need to be updated. instead of range, using something more general
+        # map with keys to lists of options.
+        params_list = []
+        for i in range(len(params_options)):
+            params = {}
+            for j in range(len(strings)):
+                params[strings[j][0]] = strings[j][1]
+            for j in range(len(numbers)):
+                params[numbers[j][0]] = params_options[i][j]
+            params_list.append(deepcopy(params))
+
+        for i in range(len(params_list)): # this part also clearly needs more generalisation
+            try:
+                params_list[i]["reg"] = params_list[i]["reg"]*reg_scale
+            except:
+                params_list[i]["reg_lambda"] = params_list[i]["reg_lambda"]*reg_scale
+
+
+        for params in params_list:
+            sweep_option = {}
+            for name in names:
+                sweep_option[name] = option[name] if name!="params" else params
+            sweep_options.append(deepcopy(sweep_option))
+
+    return sweep_options
+
+def generate_interpretability_curve(dataset_name, objective, x, Ys):
+    results = pd.read_csv('res.csv')
+    relevant_data = results[results['dataset'] == dataset_name]
+    relevant_data = relevant_data[relevant_data["objective_function"] == objective]
+    indep = relevant_data[x]
+    dep = [relevant_data[Y] for Y in Ys]
+
+    for i in range(len(dep)):
+        plt.scatter(indep, dep[i])
+        plt.xlabel(x)
+        plt.ylabel(Ys[i])
+        plt.title(dataset_name+str(objective)+x+" vs "+Ys[i])
+
+    plt.legend(Ys)
+    plt.show()
+
+
+
+
+
+#    for idx, row in results.iter_rows():
+#        model_params = results["model_params"]
+#        if row['dataset'] == dataset_name and type(model_params["objective_function"]) == type(objective):
+#            xY.append((row[x], *[row[y] for y in Ys]))
+
+#    for i in range(len(Ys)):
+#        print(x, Ys[i])
+#        for j in range(len(xY)):
+#            print(xY[j][0], xY[j][i])
+
+#    metrics for xgboost and ExponentialLoss. feed in a loss function and get back out an evaluation metric
 
 if __name__ == "__main__":
+
+    choice = 3
+
+    if choice == 1:
+        generate_interpretability_curve("advertising", "<class 'orb.rules.ExponentialObjective'>", "orb_complexity", ["orb_train_score", "orb_test_score"])
+    elif choice == 2:
+        option1= {"model_class": "orb", "objective": "ExponentialObjective", "params": {'k': 5, 'reg': 5}, "evaluators": ["orb_train_score", "orb_test_score", "orb_complexity"], "downsample_size": None}
+        option2= {"model_class": "orb", "objective": "SquaredLossObjective", "params": {'k': 5, 'reg': 5}, "evaluators": ["orb_train_score", "orb_test_score", "orb_complexity"], "downsample_size": None}
+        option3= {"model_class": "xgb.Regressor", "objective": "reg:squarederror", "params": {'n_estimators': 1, 'max_depth': 2, 'reg_lambda': 2, 'verbosity': 0}, "evaluators": [], "downsample_size": None}
+        option4= {"model_class": "xgb.Classifier", "objective": "binary:logistic", "params": {'n_estimators': 3, 'max_depth': 3, 'reg_lambda': 5, 'verbosity': 0}, "evaluators": [], "downsample_size": None}
+
+        # need to be able to handle factional values within "params". use a linspace or equivalent.
+
+        options = [option1, option2, option3, option4]
+        options = [option1, option2]
+
+        print("all sweep options: ")
+        for item in GridSearch(options):
+            print(item)
+
+        print("performing experiments")
+        all_results = sweep("advertising", options, repeats=3)
+
+        print('printing resutls')
+        print(len(all_results))
+        print(all_results)
+
+        print('writing results')
+        first = False
+        if first:
+            all_results.to_csv('res.csv', encoding='utf-8', index=False)
+        else:
+            all_results.to_csv('res.csv', mode='a', encoding='utf-8', index=False, header=False)
+
+
+        # xgboost still has errors
+        # need to save models
+        # need to load results from res_csv
+        # need eval metrics for xgboost
+    elif choice == 3:
+
+        dataset_name = 'red_wine_quality'
+        test_exp = Experiment(dataset_name, model_class="orb", objective="SquaredLossObjective",
+                   params={'k': 2, 'reg': 50}, dde=[rmse], die=[rule_complexity],
+                   downsample_size=300)
+        print(test_exp.run())
+
+    # implement rule fit top priority, also exponential error and accuracy
+
+    '''
     res_dir = os.path.join(os.getcwd(), 'results.csv')
 
-    repeats = 1
-    max_complexity = 150
-    downsample_size = None
-    norm_mean = False
-    max_k = 5
-    reg = 50
-    alpha = 0.8
-    alpha_function = lambda k: alpha
-    model_class = "ARE"
-    objective_function = SquaredLossObjective
-    max_d = 5
+    dataset_name = "advertising"
+    k, d, reg = 3, 3, 50
+    ensemble_regression = [dataset_name, "orb", SquaredLossObjective, [k, reg], False, None, None, 0.8]
+    ensemble_classification = [dataset_name, "orb", ExponentialObjective, [k, reg], False, None, None, 0.8]
+    xgboost_regression = [dataset_name, "xgboost", SquaredLossObjective, [k,d,reg], True, None, None, 0.8]
+    xgboost_classification = [dataset_name, "xgboost", ExponentialObjective, [k,d,reg], True, None, None, 0.8]
 
+    # exp_sweep(xgboost_classification, clear_results=True, save_models=False)
 
-    exp()
+    e = Experiment(dataset_name)
+    res = e.run()
+    print(res)
+    '''
+

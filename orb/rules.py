@@ -176,7 +176,9 @@ class Rule:
         self.objective = objective
 
     def __call__(self, x):
-        return self.y if self.q(x) else self.z
+        sat = self.q(x)
+        return sat*self.y + (1-sat)*self.z
+        # return self.y if self.q(x) else self.z
 
     def __repr__(self):
         return f'{self.y:+10.4f} if {self.q}'
@@ -434,13 +436,16 @@ class AdditiveRuleEnsemble:
         rules_prediction = [self(data.iloc[i]) for i in range(n)]
 
         rmse = (sum([(labels.iloc[i] - rules_prediction[i]) ** 2 for i in range(n)]) / (len(labels))) ** 0.5 # swap to a call to the loss function
+        # probably need to add a function to the loss functions...
+
         return rmse # make this comparable with rule_fit package
         # maybe use accuracy as metric for score in classification experiments
         # sklearn.auc, makes use of predict - also an option
 
     def predict(self, data):
         # returns predictions as Series/numpy array, mostly a wrapper around self.__call__(data)
-        pass
+        predictions = self.__call__(data)
+        return predictions
 
     def predict_proba(self, Xnew): # look into this
         pass

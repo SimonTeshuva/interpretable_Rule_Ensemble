@@ -174,7 +174,11 @@ class Conjunction:
         self.repr = str.join(" & ", map(str, self.props))
 
     def __call__(self, x):
-        return all(map(lambda p: p(x), self.props))
+        res = True
+        for p in self.props:
+            res &= p(x)
+        return res
+#        return all(map(lambda p: p(x), self.props))
 
     def __repr__(self):
         return self.repr
