@@ -6,7 +6,7 @@ import os
 import graphviz
 from matplotlib import pyplot as plt
 
-def generate_xgb_model(data, k, d, ld, model_type="Regressor", norm_mean = False): # norm_mean redundant. go through code to see what needs to be removed
+def generate_xgb_model(data, k=3, d=3, ld=50, model_type="Regressor", norm_mean = False): # norm_mean redundant. go through code to see what needs to be removed
     """
     >>> fn1 = "titanic"
     >>> target = "Survived"
@@ -45,6 +45,7 @@ def generate_xgb_model(data, k, d, ld, model_type="Regressor", norm_mean = False
 
 
 
+    # need to change this to use the correct scoring function
     preds = model.predict(X_train)
     train_rmse = np.sqrt(mean_squared_error(Y_train, preds))
     preds = model.predict(X_test)
@@ -54,6 +55,10 @@ def generate_xgb_model(data, k, d, ld, model_type="Regressor", norm_mean = False
     return model, train_rmse, test_rmse
 
 
+def score(model, X, Y):
+    preds = model.predict(X)
+    score = np.sqrt(mean_squared_error(Y, preds))
+    return score
 
 def count_trees(xgb_model):
     trees = xgb_model.get_booster().get_dump()
@@ -118,6 +123,7 @@ def save_xgb_model(model, dataset_name, experiment_timestamp):
 
 def save_xgb_trees(model, dataset_name, experiment_timestamp):
     result_directory_trees = os.path.join(os.getcwd(), "experiments", "results", dataset_name, experiment_timestamp)
+    # print(result_directory_trees)
     try:
         os.makedirs(result_directory_trees)
     except FileExistsError:
