@@ -135,6 +135,7 @@ class SquaredLossObjective:
         return self._f(c, m)
 
 
+
 class Rule:
     """
     Represents a rule of the form "r(x) = y if q(x) else z"
@@ -404,7 +405,6 @@ class AdditiveRuleEnsemble:
         self.max_rules += self.k if warmstart == True else 0
         rules_created = len(self.members)
         while len(self.members) < self.k and rules_created<self.max_rules: # continue until self.k many new rules have been attempted
-
             scores = [self(data.iloc[i]) for i in range(len(data))]
             alpha = self.alpha_function(len(self.members)) # alpha function is just a constant funciton at the moment, but can be expanded later
             r = Rule(reg=self.reg, alpha=alpha, objective=self.objective)

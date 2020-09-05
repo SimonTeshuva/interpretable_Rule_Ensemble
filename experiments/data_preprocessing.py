@@ -1,12 +1,11 @@
-import pandas as pd
 import os
 import re
-from sklearn.impute import SimpleImputer
-from sklearn.preprocessing import OneHotEncoder
+
+import pandas as pd
+
 from sklearn.model_selection import train_test_split
 
-
-def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_class = 'xgboost'):
+def prep_data(dataset_name, target=None, without=[], test_size=0.2, model_class='xgboost', norm_mean=False, random_seed = None):
     # assumes all files have the same labels. ie: test/train pre split, or data from various years
     """
     take a dataset in a single file, splits X and Y, and splits the data into train and test compartments
@@ -73,9 +72,11 @@ def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_
             no_files = len(next(os.walk(dataset_dir))[2])
             if first_file:
                 df = pd.DataFrame(fn_data)
+                for c in without:
+                    df[c]
                 df = df.drop(without, axis='columns')
                 df = df.dropna()
-                if no_files >1:
+                if no_files > 1:
                     df['file_name'] = name
                 first_file = False
             else:
@@ -86,16 +87,16 @@ def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_
                     df_supp['file_name'] = name
                 df = df.append(df_supp)
 
-    if target == None:
-        back_one = -1 if no_files>1 else 0
-        Y = df.iloc[:, -1+back_one]
+    if target is None:
+        back_one = -1 if no_files > 1 else 0
+        Y = df.iloc[:, -1 + back_one]
         target = df.columns[len(df.columns) - 1 + back_one]
         X = df.drop(df.columns[len(df.columns) - 1 + back_one], axis=1)
     else:
         Y = df[target]
         X = df.drop([target], axis='columns')
 
-    if model_class == 'xgboost':
+    if model_class in ['xgb.XGBRegressor', 'xgb.XGBClassifier', 'rulefit']: # seems that rulefit does not handle categorical data very well. getting dummies
         X = pd.get_dummies(X)
 
     regex = re.compile(r"[|]|<", re.IGNORECASE)
@@ -103,12 +104,99 @@ def prep_data(dataset_name, target = None, without = [], test_size = 0.2, model_
     X.columns = [regex.sub("_", col) if any(x in str(col) for x in set(('[', ']', '<'))) else col for col in
                  X.columns.values]
 
-    train, test, train_target, test_target = train_test_split(X, Y, test_size=test_size)
+#    if random_seed == None:
+#       train, test, train_target, test_target = train_test_split(X, Y, test_size=test_size)
+#    else:
+#        train, test, train_target, test_target = train_test_split(X, Y, random_state=random_seed, test_size=test_size)
+    train, test, train_target, test_target = train_test_split(X, Y, random_state=random_seed, test_size=test_size)
 
-    data = [train, train_target, test, test_target]
+    if model_class == 'realkd':
+        #train[target] = train_target
+        #test[target] = test_target
+
+        train.reset_index(inplace=True, drop=True)
+        test.reset_index(inplace=True, drop=True)
+        train_target.reset_index(inplace=True, drop=True)
+        test_target.reset_index(inplace=True, drop=True)
+
+        #train_target = train[target]
+        #test_target = test_target[target]
+
+        #train = train.drop(target, axis='columns')
+        #test = test.drop(target, axis='columns')
 
     n = (len(test), len(train))
 
-    return data, target, n
+    if norm_mean:  # scikitlearn transformer
+        target_train_mean = sum(train_target) / len(train_target)
+        #        target_test_mean = sum(test_target)/len(test_target)
 
+        train_target -= target_train_mean
+        test_target -= target_train_mean
 
+        train_target = [train_target, target_train_mean]
+        test_target = [test_target, target_train_mean]
+
+    data = [train, train_target, test, test_target]
+
+    return data, target, n, random_seed
+
+def dataset_signature(dataset_name):
+    #    data = {dataset_name: (target, without)}
+    data = {"advertising": ("Clicked_on_Ad", ["Ad_Topic_Line", "City", "Timestamp"], []),
+            "avocado_prices": ("AveragePrice", ["Date", "group"], []),
+            "cdc_physical_activity_obesity": ("Data_Value",
+                                              ["Data_Value_Alt", "LocationAbbr", "Data_Value_Footnote_Symbol",
+                                               "Data_Value_Footnote", "GeoLocation",
+                                               "ClassID", "TopicID", "QuestionID", "DataValueTypeID", "LocationID",
+                                               "StratificationCategory1",
+                                               "Stratification1", "StratificationCategoryId1", "StratificationID1"],
+                                              []),
+            "gdp_vs_satisfaction": ("Satisfaction", ["Country"], []),
+            "halloween_candy_ranking": (
+            "winpercent", ['competitorname'], ['very bad', 'bad', 'average', 'good', 'very good']),
+            "metacritic_games": ("user_score", ["GameID", "name", "players", "attribute", "release_date", "link", "rating", "user_positive", "user_neutral",	"user_negative"], []),
+            "random_regression": (None, [], []),  # "" not appropriate as null input, potentiall swap to None
+            "red_wine_quality": ("quality", [], []),
+            "suicide_rates": ("suicides/100k pop", ["suicides_no", "population", "HDI for year"], []),
+            "titanic": ("Survived", ['PassengerId', 'Name', 'Ticket', 'Cabin'], []),
+            "us_minimum_wage_by_state": ("CPI.Average", ["Table_Data", "Footnote"], []),  # may be wrong target
+            "used_cars": ("avgPrice", [], []),
+            "wages_demographics": ("earn", [], []),
+            "who_life_expectancy": ("Life expectancy ", [], []),
+            "world_happiness_indicator": ("Happiness_Score", ["Country", "Happiness_Rank"], []),
+            "boston": ("MEDV", [], []),
+            }
+
+    dataset_info = data[dataset_name]
+    target = dataset_info[0]
+    without = dataset_info[1]
+    return target, without
+
+def exp_data_prep(dataset_name, model_class = "orb", norm_mean = False, downsample_size = None, random_seed = None):
+    target_name, without = dataset_signature(dataset_name)
+
+    data, target_name, n, random_seed = prep_data(dataset_name=dataset_name, target=target_name, without=without,
+                                     test_size=0.2, model_class=model_class, norm_mean=norm_mean, random_seed=random_seed)
+
+    if norm_mean == False:
+        [train, train_target, test, test_target] = data
+    else:
+        [train, [train_target, train_target_mean], test, [test_target, test_target_mean]] = data
+
+    if downsample_size != None: # can remove downsampling on test data
+        train[target_name] = train_target
+#        test[target_name] = test_target
+
+        sampled_train = train.sample(n=min(downsample_size, len(train_target)), random_state=random_seed)
+#        sampled_test = test.sample(n=min(downsample_size, len(test_target)), random_state=random_seed)
+
+        train_target = sampled_train[target_name]
+#        test_target = sampled_test[target_name]
+
+        train = sampled_train.drop([target_name], axis='columns')
+#        test = sampled_test.drop([target_name], axis='columns')
+
+    data = [train, train_target, test, test_target]
+
+    return data, target_name, random_seed
