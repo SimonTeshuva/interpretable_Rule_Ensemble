@@ -10,8 +10,10 @@ from realkd.rules import GradientBoostingRuleEnsemble, LogisticLoss, SquaredLoss
 
 from experiments.data_preprocessing import *
 
+
 def generate_random_seed(max_seed=2**32 - 1):
     return random.randrange(max_seed)
+
 
 def get_timestamp():
     now = datetime.datetime.now()
@@ -22,6 +24,7 @@ def get_timestamp():
     dt_object = dt_object.replace(":", "_")
     dt_object = dt_object.replace("-", "_")
     return dt_object
+
 
 class DataIndependentEvaluator:
 
@@ -55,14 +58,14 @@ def orb_complexity():
 
     return DataIndependentEvaluator('orb_complexity', f)
 
-def RuleFit_complexity(): # add getting the most important rules
+
+def rulefit_complexity():  # add getting the most important rules
     def f(model):
-#        no_rules = 10
-        # model_no_ruls = 10
         rules = model.get_rules()
-        rules = rules[rules.coef != 0].sort_values("support", ascending=False)#[:no_rules]
+        rules = rules[rules.coef != 0].sort_values("support", ascending=False)
         return sum([(rule[1]['coef'] != 0) + len(rule[1]['rule'].split("&")) for rule in rules.iterrows()])
-    return DataIndependentEvaluator('RuleFit_complexity', f)
+    return DataIndependentEvaluator('rulefit_complexity', f)
+
 
 def forest_complexity():
     def f(model):
@@ -73,39 +76,47 @@ def forest_complexity():
 
     return DataIndependentEvaluator('forest_complexity', f)
 
+
 def rmse():
     def f(model, X, y):
         return (sum((model.predict(X) - y) ** 2)/len(y)) ** 0.5
 
     return DataDependentEvaluator('rmse', f)
 
+
 def accuracy():
     def f(model, X, y):
-        return sum((model.predict(X)==y))/len(y)
+        return sum((model.predict(X) == y))/len(y)
 
     return DataDependentEvaluator('accuracy', f)
 
-def rulefit_wrapper(objective= 'regress', max_rules = 2000, Cs=1):
+
+def rulefit_wrapper(objective= 'regress', max_rules=2000, Cs=1):
     rf = rulefit.RuleFit(max_rules=max_rules, rfmode=objective, model_type='r', Cs=Cs)
     return rf
+
 
 def rulefit_regression_wrapper(max_rules = 2000, Cs=1):
     rf = rulefit.RuleFit(max_rules=max_rules, rfmode="regress", model_type='r', Cs=Cs)
     return rf
 
+
 def rulefit_classification_wrapper(max_rules = 2000, Cs=1):
     rf = rulefit.RuleFit(max_rules=max_rules, rfmode="classify", model_type='r', Cs=Cs)
     return rf
 
-def rulefit_regression_wrapper_gb(objective = "ls", n_estimators = 10, max_depth = 10, alpha = 0.9, warmstart = False, learning_rate = 0.1, max_rules = 2000, Cs=1):
-    gb = GradientBoostingRegressor(loss=objective, n_estimators=n_estimators, max_depth=max_depth, alpha=alpha, warm_start=warmstart, learning_rate=learning_rate) # switch to default
+
+def rulefit_regression_wrapper_gb(objective = "ls", n_estimators = 10, max_depth = 10, warmstart = False, learning_rate = 0.1, max_rules = 2000, Cs=1):
+    gb = GradientBoostingRegressor(loss=objective, n_estimators=n_estimators, max_depth=max_depth, warm_start=warmstart, learning_rate=learning_rate) # switch to default
     rf = rulefit.RuleFit(tree_generator=gb, max_rules=max_rules, rfmode="regress", model_type='r', Cs=Cs)
     return rf
 
-def rulefit_classification_wrapper_gb(objective = "exponential", n_estimators = 10, max_depth = 10, alpha = 0.9, warmstart = False, learning_rate = 0.1, max_rules = 2000, Cs=1):
-    gb = GradientBoostingClassifier(loss=objective, n_estimators=n_estimators, max_depth=max_depth, alpha=alpha, warm_start=warmstart, learning_rate=learning_rate)
+
+def rulefit_classification_wrapper_gb(objective = "exponential", n_estimators = 10, max_depth = 10, warmstart = False, learning_rate = 0.1, max_rules = 2000, Cs=1):
+    gb = GradientBoostingClassifier(loss=objective, n_estimators=n_estimators, max_depth=max_depth, warm_start=warmstart, learning_rate=learning_rate)
     rf = rulefit.RuleFit(tree_generator=gb, max_rules=max_rules, rfmode="classify", model_type='r', Cs=Cs)
     return rf
+
 
 MODEL_MAP = {"orb": AdditiveRuleEnsemble,
              "xgb.XGBRegressor": xgb.XGBRegressor,
@@ -182,7 +193,7 @@ class Experiment:
                     "objective_function": self.objective if type(self.objective) == str else self.objective.__name__,
                     "model_class": self.model_class_key,
                     "timestamp": get_timestamp(),
-                    "random_seed": generate_random_seed()}
+                    "random_seed": seed}
 
         for key, value in self.results.items():
             res_dict[key] = value

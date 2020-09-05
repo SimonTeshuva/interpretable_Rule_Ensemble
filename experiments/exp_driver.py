@@ -1,3 +1,5 @@
+import time
+
 import numpy as np
 from matplotlib import pyplot as plt
 
@@ -5,10 +7,10 @@ from xgb_scripts.xgb_functions import count_trees
 
 from experiments.exp_architecture import *
 
-def many_exp(dataset_name, fixed_exp_params = {}, params_vectors = {}):
+def many_exp(dataset_name, fixed_exp_params, variable_exp_params):
     res_df = pd.DataFrame()
 
-    runs = param_options(fixed_exp_params, params_vectors) # rename to variable_params
+    runs = param_options(fixed_exp_params, variable_exp_params)
     for run in runs:
         print(run)
         exp = Experiment(dataset_name, **run)
@@ -30,11 +32,12 @@ def run_and_plot(dataset_names, reqs_vect, repeats):
             X, Y_test, Y_train = [], [], []
             for i in range(repeats):
                 print("Repeat: ", str(i))
-                results = many_exp(dataset_name=dataset_name, fixed_exp_params=fixed, params_vectors=variable)
+                results = many_exp(dataset_name=dataset_name, fixed_exp_params=fixed, variable_exp_params=variable)
                 res_df = res_df.append(results, ignore_index=True)
                 X.append(list(results[x]))
                 Y_test.append(list(results[y + '_test']))
                 Y_train.append(list(results[y + '_train']))
+
             X = np.array(X).mean(axis=0)
             Y_test = np.array(Y_test).mean(axis=0)
             Y_train = np.array(Y_train).mean(axis=0)
@@ -61,6 +64,7 @@ def get_best(res_df, dataset_name, max_interpretable):
     rulefit_df = res_df.loc[res_df['model_class'] == 'rulefit']
     xgboost_df = res_df.loc[res_df['model_class'] == "xgb.XGBRegressor"]
     xgboost_df = xgboost_df.append(res_df.loc[res_df['model_class'] == "xgb.XGBClassifier"], ignore_index=True)
+    realkd_df = res_df.loc[res_df['model_class'] == 'realkd']
 
     dde_metric = ('rmse' if orb_df.iloc[0]["objective_function"] == "SquaredLossObjective" else 'accuracy') + '_test'
 
@@ -83,47 +87,75 @@ def get_best(res_df, dataset_name, max_interpretable):
             closest_xgb_complexity = complexity
             closest_xgb = xgb_model
 
+    closest_realkd = None
+    closest_realkd_complexity = None
+    for idx, realkd_model in realkd_df.iterrows():
+        complexity = realkd_model['forest_complexity']
+
+        if closest_realkd is None or abs(best_orb["orb_complexity"] - complexity) < abs(best_orb["orb_complexity"] - closest_realkd_complexity):
+            closest_realkd_complexity = complexity
+            closest_realkd = realkd_model
 
     closest_rulefit = None
     closest_rulefit_complexity = None
     for idx, rulefit_model in rulefit_df.iterrows():
-        complexity = rulefit_model['RuleFit_complexity']
+        complexity = rulefit_model['rulefit_complexity']
 
         if closest_rulefit is None or abs(best_orb["orb_complexity"] - complexity) < abs(best_orb["orb_complexity"] - closest_rulefit_complexity):
             closest_rulefit_complexity = complexity
             closest_rulefit = rulefit_model
 
-    return best_orb, closest_xgb, closest_rulefit
+    return best_orb, closest_xgb, closest_rulefit, closest_realkd
 
 
-def make_comparison(dataset_name, best_orb, closest_xgboost, closest_rulefit, downsample_size):
+def make_comparison(dataset_name, best_orb, closest_xgboost, closest_rulefit, closest_realkd, downsample_size):
+    # add a model save for each of these four
+
     problem_type = 'r' if best_orb["objective_function"] == "SquaredLossObjective" else 'c'
 
     print('best_orb')
     print(best_orb)
-    exp = Experiment(dataset_name=dataset_name, model_class=best_orb['model_class'], objective=best_orb['objective_function'],
-                     params=best_orb['model_params'], dde=[rmse if problem_type == 'r' else accuracy], die=[orb_complexity], downsample_size=downsample_size)
+    exp = Experiment(dataset_name=dataset_name, model_class=best_orb['model_class'],
+                     objective=best_orb['objective_function'], params=best_orb['model_params'],
+                     dde=[rmse if problem_type == 'r' else accuracy], die=[orb_complexity],
+                     downsample_size=downsample_size)
     orb_res, orb_model = exp.run()
     print('orb_complexity', orb_res['orb_complexity'])
     print('rmse_test', orb_res['rmse_test'])
 
+    print('best_orb')
+    print(closest_realkd)
+    exp = Experiment(dataset_name=dataset_name, model_class=closest_realkd['model_class'],
+                     objective=closest_realkd['objective_function'], params=closest_realkd['model_params'],
+                     dde=[rmse if problem_type == 'r' else accuracy], die=[orb_complexity],
+                     downsample_size=downsample_size)
+    realkd_res, realk_model = exp.run()
+    for rule in realk_model.members:
+        print(rule)
+    print('realkd_complexity', realkd_res['realkd_complexity'])
+    print('rmse_test', realkd_res['rmse_test'])
+
     print('closest_rulefit')
     print(closest_rulefit)
-    exp = Experiment(dataset_name=dataset_name, model_class=closest_rulefit['model_class'], objective=closest_rulefit['objective_function'],
-                     params=closest_rulefit['model_params'], dde=[rmse if problem_type == 'r' else accuracy], die=[RuleFit_complexity], downsample_size=downsample_size)
+    exp = Experiment(dataset_name=dataset_name, model_class=closest_rulefit['model_class'],
+                     objective=closest_rulefit['objective_function'], params=closest_rulefit['model_params'],
+                     dde=[rmse if problem_type == 'r' else accuracy], die=[rulefit_complexity],
+                     downsample_size=downsample_size)
     rulefit_res, rulefit_model = exp.run()
     rules = rulefit_model.get_rules()
     rules = rules[rules.coef != 0].sort_values("support", ascending=False)
     coef_rule = [(rule[1]['coef'], rule[1]['rule']) for rule in rules.iterrows()]
     for coef, rule in coef_rule:
         print(coef, 'if', rule)
-    print('rulefit_complexity', rulefit_res['RuleFit_complexity'])
+    print('rulefit_complexity', rulefit_res['rulefit_complexity'])
     print('rmse_test', rulefit_res['rmse_test'])
 
     print("closest_xgboost")
     print(closest_xgboost)
-    exp = Experiment(dataset_name=dataset_name, model_class=closest_xgboost['model_class'], objective=closest_xgboost['objective_function'],
-                     params=closest_xgboost['model_params'], dde=[rmse if problem_type == 'r' else accuracy], die=[forest_complexity], downsample_size=downsample_size)
+    exp = Experiment(dataset_name=dataset_name, model_class=closest_xgboost['model_class'],
+                     objective=closest_xgboost['objective_function'], params=closest_xgboost['model_params'],
+                     dde=[rmse if problem_type == 'r' else accuracy], die=[forest_complexity],
+                     downsample_size=downsample_size)
     xgboost_res, xgb_model = exp.run()
     trees = xgb_model.get_booster().get_dump()
     trees = [tree.split('\n') for tree in trees]
@@ -146,8 +178,10 @@ def full_comparison(reqs_vect, dataset_names = ['halloween_candy_ranking', 'bost
         print(dataset_name)
         res_df = run_and_plot([dataset_name], reqs_vect, repeats)
 
-        # best_orb, closest_xgboost, closest_rulefit = get_best(res_df, dataset_name, max_interpretable)
-        # make_comparison(dataset_name, best_orb, closest_xgboost, closest_rulefit, downsample_size)
+        dataset_name, best_orb, closest_xgboost, closest_rulefit, closest_realkd =\
+            get_best(res_df, dataset_name, max_interpretable)
+
+        make_comparison(dataset_name, best_orb, closest_xgboost, closest_rulefit, closest_realkd, downsample_size)
 
     return res_df
 
@@ -198,13 +232,13 @@ if __name__ == "__main__":
     rulefit_fixed = {"model_class": 'rulefit',
              "objective": 'regress',
              "dde": [rmse],
-             "die": [RuleFit_complexity],
+             "die": [rulefit_complexity],
              "downsample_size": downsample_size}
 
     Cs_lst = [[0.1], [0.2], [0.5], [0.75], [1], [2], [5], [10], [20], [50], [100], [200], [500], [1000]]
     Cs = [np.array(C) for C in Cs_lst]
     rulefit_variable = {'Cs': Cs}
-    rulefit_x = 'RuleFit_complexity'
+    rulefit_x = 'rulefit_complexity'
     rulefit_y = 'rmse'
 
     rulefit_experiments = (rulefit_fixed, rulefit_variable, rulefit_x, rulefit_y)
@@ -234,9 +268,9 @@ if __name__ == "__main__":
     realkd_experiments = (realkd_fixed, realkd_variable, realkd_x, realkd_y)
 
     reqs_vect = [realkd_experiments, orb_experiments, rulefit_experiments, xgboost_experiments]
-#    reqs_vect = [xgboost_experiments]
 
-    full_comparison(reqs_vect, dataset_names=['halloween_candy_ranking'], repeats=repeats, max_interpretable=max_interpretable)
+    full_comparison(reqs_vect, dataset_names=['halloween_candy_ranking'], repeats=repeats,
+                    max_interpretable=max_interpretable)
 
 
     #ToDO
