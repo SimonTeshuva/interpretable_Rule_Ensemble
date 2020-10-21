@@ -45,8 +45,16 @@ if __name__ == "__main__":
     regs = [2, 5, 10, 20, 50, 100, 200, 500, 1000]
 
     all_datasets = get_all_datasets()
+    splits = get_splits()
 
     standard_exp_driver(splits, all_datasets)
     regs_vs_compute_driver(splits, all_datasets, regs)
     rule_vs_compute_driver(splits, all_datasets)
     unrestricted_rulefit_driver(splits, all_datasets, Cs_lst, test_size)
+
+
+    #TODO:
+    # README
+    # Doctests/Documentation
+    # requirements.txt
+    # refactoring with elementary runs (mid priority)
