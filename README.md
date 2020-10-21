@@ -1,4 +1,4 @@
-# Experiments on Optimal Rule Boosting for Interpretable Rule Ensembles
+# Optimal Rule Boosting for Interpretable Rule Ensembles - Experiments
 
  Code for to perform experiments comparing the effectiveness of optimal
  rule boosting, greedy rule boosting and rulefit. Used to
