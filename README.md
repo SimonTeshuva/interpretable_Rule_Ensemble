@@ -5,6 +5,19 @@
   create tables of results used in the paper 
   "Better Short than Greedy: Interpretable Models through Optimal Rule Boosting"
 
+The datasets directory includes all the datasets used to create the tables of results in the above paper. 
+The experiments folder contains the python scripts used to perform the experiments on the datasets.
+
+exp_driver.py: a collection of wrapper functions for convieniently replicating the experiments perfomred 
+to generate tables of results
+
+experiment_code.py: a collection of functions used to perform the experiments and generate tables of results
+
+dataset_prep.py: data pre-processing performed on all datasets before being fitted
+
+dataset_info.py: contains functions that return parameters used for each dataset
+
+exp_setup_new.py: oontains all the code from the four above mentioned files as well as some legacy code
 ## Installation
 
 
